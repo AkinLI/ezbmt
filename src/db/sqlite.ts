@@ -199,6 +199,30 @@ await d.executeSql([
     await d.executeSql('REPLACE INTO meta(k,v) VALUES("schema_version",8)');
     }
 
+    if (cur < 9) {
+await d.executeSql([
+'CREATE TABLE IF NOT EXISTS speed_sessions (',
+'  id TEXT PRIMARY KEY,',
+'  note TEXT,',
+'  unit TEXT DEFAULT "kmh",', // 'kmh' | 'mph'
+'  created_at TEXT',
+')'
+].join('\n'));
+await d.executeSql([
+'CREATE TABLE IF NOT EXISTS speed_points (',
+'  id TEXT PRIMARY KEY,',
+'  session_id TEXT NOT NULL,',
+'  idx INTEGER NOT NULL,',
+'  rx REAL NOT NULL,',
+'  ry REAL NOT NULL,',
+'  ts_ms INTEGER NOT NULL,',
+'  FOREIGN KEY (session_id) REFERENCES speed_sessions(id)',
+')'
+].join('\n'));
+try { await d.executeSql('CREATE INDEX IF NOT EXISTS idx_speed_points_session ON speed_points(session_id, idx)'); } catch (_e) {}
+await d.executeSql('REPLACE INTO meta(k,v) VALUES("schema_version",9)');
+}
+
 }
 
 /* DAO 基本 */
@@ -479,3 +503,58 @@ export async function bumpSyncRetry(id: string) {
 const d = await openDB();
 await d.executeSql('UPDATE sync_queue SET retries = retries + 1 WHERE id=?', [id]);
 }
+
+export async function insertSpeedSession(note?: string, unit: 'kmh'|'mph' = 'kmh') {
+const d = await openDB();
+const id = Math.random().toString(36).slice(2);
+const now = new Date().toISOString();
+await d.executeSql(
+'INSERT INTO speed_sessions (id,note,unit,created_at) VALUES (?,?,?,?)',
+[id, note || null, unit, now]
+);
+return id;
+}
+export async function insertSpeedPoints(sessionId: string, points: Array<{ idx:number; rx:number; ry:number; ts:number }>) {
+const d = await openDB();
+await d.executeSql('BEGIN');
+try {
+for (const p of points) {
+const id = Math.random().toString(36).slice(2);
+await d.executeSql(
+'INSERT INTO speed_points (id,session_id,idx,rx,ry,ts_ms) VALUES (?,?,?,?,?,?)',
+[id, sessionId, p.idx, p.rx, p.ry, p.ts]
+);
+}
+await d.executeSql('COMMIT');
+} catch (e) {
+await d.executeSql('ROLLBACK');
+throw e;
+}
+}
+export async function listSpeedSessions(): Promise<Array<{ id:string; note?:string|null; unit:'kmh'|'mph'; created_at:string }>> {
+const d = await openDB();
+const [res] = await d.executeSql('SELECT * FROM speed_sessions ORDER BY datetime(created_at) DESC');
+const out:any[] = [];
+for (let i=0;i<res.rows.length;i++) out.push(res.rows.item(i));
+return out as any;
+}
+export async function getSpeedSessionPoints(sessionId: string): Promise<Array<{ idx:number; rx:number; ry:number; ts_ms:number }>> {
+const d = await openDB();
+const [res] = await d.executeSql('SELECT idx,rx,ry,ts_ms FROM speed_points WHERE session_id=? ORDER BY idx ASC', [sessionId]);
+const out:any[] = [];
+for (let i=0;i<res.rows.length;i++) out.push(res.rows.item(i));
+return out as any;
+}
+export async function deleteSpeedSession(sessionId: string) {
+const d = await openDB();
+await d.executeSql('BEGIN');
+try {
+await d.executeSql('DELETE FROM speed_points WHERE session_id=?', [sessionId]);
+await d.executeSql('DELETE FROM speed_sessions WHERE id=?', [sessionId]);
+await d.executeSql('COMMIT');
+} catch (e) {
+await d.executeSql('ROLLBACK');
+throw e;
+}
+}
+

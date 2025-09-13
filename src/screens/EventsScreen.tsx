@@ -94,9 +94,15 @@ style={{ paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#607d8b', 
 </Pressable>
 <Pressable
 onPress={() => nav.navigate('Settings')}
-style={{ paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#455a64', borderRadius: 8 }}
+style={{ paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#455a64', borderRadius: 8, marginRight: 6 }}
 >
 <Text style={{ color: '#fff' }}>設定</Text>
+</Pressable>
+<Pressable
+onPress={() => nav.navigate('SpeedCam')}
+style={{ paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#2e7d32', borderRadius: 8 }}
+>
+<Text style={{ color: '#fff' }}>測速</Text>
 </Pressable>
 </View>
 

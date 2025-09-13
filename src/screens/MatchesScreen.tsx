@@ -134,6 +134,9 @@ const renderItem = ({ item }: { item: MatchRow }) => (
     <Pressable onPress={() => navigation.navigate('MatchMembers', { matchId: item.id })} style={{ padding: 10, backgroundColor: '#3949ab', borderRadius: 8, marginRight: 6, marginBottom: 6 }}>
       <Text style={{ color: '#fff' }}>成員</Text>
     </Pressable>
+    <Pressable onPress={() => navigation.navigate('Speed', { matchId: item.id })} style={{ padding: 10, backgroundColor: '#00695c', borderRadius: 8, marginRight: 6, marginBottom: 6 }}>
+      <Text style={{ color: '#fff' }}>測速</Text>
+    </Pressable>
   </View>
 
   {/* 記錄模式切換：tap/route */}

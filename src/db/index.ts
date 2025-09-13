@@ -62,6 +62,12 @@ export const deleteMatchMember = (dao as any).deleteMatchMember;
 export const inviteEventMemberByEmail = (dao as any).inviteEventMemberByEmail;
 export const setEventOwnerRPC = (dao as any).setEventOwnerRPC;
 
+export const insertSpeedSession = (sqliteDao as any).insertSpeedSession;
+export const insertSpeedPoints = (sqliteDao as any).insertSpeedPoints;
+export const listSpeedSessions = (sqliteDao as any).listSpeedSessions;
+export const getSpeedSessionPoints = (sqliteDao as any).getSpeedSessionPoints;
+export const deleteSpeedSession = (sqliteDao as any).deleteSpeedSession;
+
 
 export async function listMyEvents() {
 if (BACKEND === 'supabase' && (supaDao as any).listMyEvents) {

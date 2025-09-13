@@ -16,6 +16,7 @@ import JoinEventScreen from './screens/JoinEventScreen';
 import ProfileScreen from './screens/ProfileScreen';
 import EventMembersScreen from './screens/EventMembersScreen';
 import MatchMembersScreen from './screens/MatchMembersScreen';
+import SpeedCam from './screens/SpeedCamScreen';
 
 
 const Stack = createNativeStackNavigator();
@@ -44,6 +45,7 @@ screenOptions={{ headerBackTitle: '' }}
 <Stack.Screen name="Media" component={MediaScreen} options={{ title: '媒體' }} />
 <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: '設定' }} />
 <Stack.Screen name="Replay" component={ReplayScreen} options={{ title: '路徑回放' }} />
+<Stack.Screen name="SpeedCam" component={SpeedCam} options={{ title: '測速' }} />
 </Stack.Navigator>
 );
 }

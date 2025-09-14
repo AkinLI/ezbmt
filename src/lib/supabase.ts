@@ -2,6 +2,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 export const supa = createClient("https://uejjamgowybupzwsjctk.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVlamphbWdvd3lidXB6d3NqY3RrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTczOTgxMjEsImV4cCI6MjA3Mjk3NDEyMX0.MtkQ7RGDq883ZecG3OxG6-ImsnZfD4QBLZpNYW7DWy8", { auth: { persistSession: true, autoRefreshToken: true } });
 /* Events */
+export const SUPABASE_URL="https://uejjamgowybupzwsjctk.supabase.co";
 export async function insertEvent(e: { id?: string; name: string; level?: string; venue?: string; start_at?: string; end_at?: string; }) {
 const { data, error } = await supa.from('events').insert({
 id: e.id, name: e.name, level: e.level ?? null, venue: e.venue ?? null,

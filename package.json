@@ -7,7 +7,8 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "start": "react-native start",
-    "test": "jest"
+    "test": "jest",
+    "gen:icons": "node scripts/gen-icons.js"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
@@ -23,6 +24,7 @@
     "react-hook-form": "^7.62.0",
     "react-native": "0.81.1",
     "react-native-badminton-speed": "file:../react-native-badminton-speed",
+    "react-native-bootsplash": "^6.3.11",
     "react-native-fs": "^2.20.0",
     "react-native-gesture-handler": "^2.28.0",
     "react-native-get-random-values": "^1.11.0",
@@ -61,6 +63,7 @@
     "jest": "^29.6.3",
     "prettier": "2.8.8",
     "react-test-renderer": "19.1.0",
+    "sharp": "^0.34.3",
     "typescript": "^5.8.3"
   },
   "engines": {

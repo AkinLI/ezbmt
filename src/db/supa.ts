@@ -337,3 +337,46 @@ export async function setEventOwnerRPC(args: { eventId: string; userId: string }
 const { error } = await supa.rpc('set_event_owner', { p_event_id: args.eventId, p_user_id: args.userId });
 if (error) throw error;
 }
+
+/* 新增：刪賽事/檢查是否有場次 */
+// 是否有此賽事的場次
+export async function hasEventMatches(eventId: string): Promise<boolean> {
+// 以 limit(1) 檢查是否存在，避免使用 count
+const { data, error } = await supa
+.from('matches')
+.select('id')
+.eq('event_id', eventId)
+.limit(1);
+if (error) throw error;
+return (data || []).length > 0;
+}
+export async function deleteEvent(eventId: string): Promise<void> {
+  // 前端已先檢查無場次；這裡順手清掉 event_members 以避免 FK 堵住
+  try { await supa.from('event_members').delete().eq('event_id', eventId); } catch(_e) {}
+  const { error } = await supa.from('events').delete().eq('id', eventId);
+  if (error) throw error;
+}
+
+/* 新增：是否有記錄、刪除場次（含相依資料） */
+// 是否有此場次的記錄
+export async function hasMatchRallies(matchId: string): Promise<boolean> {
+// 同樣用 limit(1) 檢查是否存在
+const { data, error } = await supa
+.from('rallies')
+.select('id')
+.eq('match_id', matchId)
+.limit(1);
+if (error) throw error;
+return (data || []).length > 0;
+}
+export async function deleteMatch(matchId: string): Promise<void> {
+  try { await supa.from('rallies').delete().eq('match_id', matchId); } catch(_e) {}
+  try { await supa.from('games').delete().eq('match_id', matchId); } catch(_e) {}
+  try { await supa.from('match_players').delete().eq('match_id', matchId); } catch(_e) {}
+  try { await supa.from('chat_messages').delete().eq('match_id', matchId); } catch(_e) {}
+  try { await supa.from('media').delete().eq('owner_type','match').eq('owner_id', matchId); } catch(_e) {}
+  try { await supa.from('match_members').delete().eq('match_id', matchId); } catch(_e) {}
+  const { error } = await supa.from('matches').delete().eq('id', matchId);
+  if (error) throw error;
+}
+

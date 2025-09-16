@@ -87,3 +87,13 @@ const id = Math.random().toString(36).slice(2);
 await sqliteDao.insertEvent({ id, name: args.name });
 return id;
 }
+
+export async function createMatchRPC(args: { event_id: string; type: string; courtNo?: string | null }) {
+if (BACKEND === 'supabase' && (supaDao as any).createMatchRPC) {
+return supaDao.createMatchRPC(args);
+}
+// 本地 SQLite 後援
+const id = Math.random().toString(36).slice(2);
+await sqliteDao.insertMatch({ id, event_id: args.event_id, type: args.type, court_no: args.courtNo ?? undefined });
+return id;
+}

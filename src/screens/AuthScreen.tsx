@@ -14,6 +14,9 @@ ActivityIndicator,
 StatusBar,
 } from 'react-native';
 import { supa, getCurrentUser } from '../lib/supabase';
+//import IntroShuttle from '../components/IntroShuttle';
+
+
 
 const ACTION_IMG = require('../images/action.png'); // 確認路徑
 

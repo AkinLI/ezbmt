@@ -17,6 +17,14 @@ export { enqueueSync, listSyncQueue, removeSyncItem, bumpSyncRetry } from './sql
 export const insertEvent = dao.insertEvent;
 export const listEvents = dao.listEvents;
 
+// 新增：檢查及刪除場次
+export const hasMatchRallies = (dao as any).hasMatchRallies;
+export const deleteMatch = (dao as any).deleteMatch;
+
+// 新增：檢查及刪除賽事
+export const hasEventMatches = (dao as any).hasEventMatches;
+export const deleteEvent = (dao as any).deleteEvent;
+
 export const insertMatch = dao.insertMatch;
 export const listMatches = dao.listMatches;
 export const updateMatchRules = dao.updateMatchRules;

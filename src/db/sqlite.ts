@@ -558,3 +558,36 @@ throw e;
 }
 }
 
+export async function hasEventMatches(eventId: string): Promise<boolean> {
+  const d = await openDB();
+  const [res] = await d.executeSql('SELECT COUNT(1) AS c FROM matches WHERE event_id=?', [eventId]);
+  const c = res.rows.length ? Number(res.rows.item(0).c) : 0;
+  return c > 0;
+}
+export async function deleteEvent(eventId: string): Promise<void> {
+  const d = await openDB();
+  await d.executeSql('DELETE FROM events WHERE id=?', [eventId]);
+}
+
+export async function hasMatchRallies(matchId: string): Promise<boolean> {
+  const d = await openDB();
+  const [res] = await d.executeSql('SELECT COUNT(1) AS c FROM rallies WHERE match_id=?', [matchId]);
+  const c = res.rows.length ? Number(res.rows.item(0).c) : 0;
+  return c > 0;
+}
+export async function deleteMatch(matchId: string): Promise<void> {
+  const d = await openDB();
+  await d.executeSql('BEGIN');
+  try {
+    await d.executeSql('DELETE FROM rallies WHERE match_id=?', [matchId]);
+    await d.executeSql('DELETE FROM games WHERE match_id=?', [matchId]);
+    await d.executeSql('DELETE FROM match_players WHERE match_id=?', [matchId]);
+    await d.executeSql('DELETE FROM chat_messages WHERE match_id=?', [matchId]);
+    await d.executeSql('DELETE FROM media WHERE owner_type=? AND owner_id=?', ['match', matchId]);
+    await d.executeSql('DELETE FROM matches WHERE id=?', [matchId]);
+    await d.executeSql('COMMIT');
+  } catch (e) {
+    await d.executeSql('ROLLBACK');
+    throw e;
+  }
+}

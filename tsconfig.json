@@ -1,11 +1,5 @@
-{
-  "extends": "@react-native/typescript-config",
-  "include": ["**/*.ts", "**/*.tsx"],
-  "exclude": ["**/node_modules", "**/Pods", "src", "index.ts", "index.tsx"]
-,
-"compilerOptions": {
-// ...
-"typeRoots": ["./src/@types", "./node_modules/@types"],
-"skipLibCheck": true
-}
-}
+
+{ "extends": "@react-native/typescript-config"
+ , 
+ "compilerOptions": { "skipLibCheck": true, "typeRoots": ["./src/@types", "./node_modules/@types"] }
+ , "include": ["src//*.ts", "src//*.tsx"], "exclude": ["/node_modules", "/Pods"] }

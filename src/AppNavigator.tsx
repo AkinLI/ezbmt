@@ -22,11 +22,17 @@ import SpeedCam from './screens/SpeedCamScreen';
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator() {
+const headerDark = React.useMemo(() => ({
+headerStyle: { backgroundColor: '#111' },   // 標題列底色
+headerTitleStyle: { color: '#fff' },        // 標題文字
+headerTintColor: '#fff',                    // 返回箭頭/右上角按鈕顏色
+headerShadowVisible: false,                 // 移除底部陰影（更貼近深色）
+// 若 iOS 想做霧面可用：headerBlurEffect: 'systemChromeMaterialDark'
+}), []);
 return (
 <Stack.Navigator
 initialRouteName="Events"
-// native-stack 不支援 headerBackTitleVisible，改用 headerBackTitle: ''
-screenOptions={{ headerBackTitle: '' }}
+screenOptions={{ headerBackTitle: '', ...headerDark }}
 >
 {BACKEND === 'supabase' && (
 <Stack.Screen name="Auth" component={AuthScreen} options={{ title: '登入' }} />

@@ -341,14 +341,12 @@ if (error) throw error;
 /* 新增：刪賽事/檢查是否有場次 */
 // 是否有此賽事的場次
 export async function hasEventMatches(eventId: string): Promise<boolean> {
-// 以 limit(1) 檢查是否存在，避免使用 count
-const { data, error } = await supa
+const { count, error } = await supa
 .from('matches')
-.select('id')
-.eq('event_id', eventId)
-.limit(1);
+.select('id', { count: 'exact', head: true })
+.eq('event_id', eventId);
 if (error) throw error;
-return (data || []).length > 0;
+return (count || 0) > 0;
 }
 export async function deleteEvent(eventId: string): Promise<void> {
   // 前端已先檢查無場次；這裡順手清掉 event_members 以避免 FK 堵住
@@ -380,3 +378,12 @@ export async function deleteMatch(matchId: string): Promise<void> {
   if (error) throw error;
 }
 
+export async function listGamesByMatch(matchId: string) {
+  const { data, error } = await supa
+    .from('games')
+    .select('index_no,home_score,away_score,winner_team')
+    .eq('match_id', matchId)
+    .order('index_no', { ascending: true });
+  if (error) throw error;
+  return data || [];
+}

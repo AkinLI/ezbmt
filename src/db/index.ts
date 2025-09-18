@@ -25,6 +25,8 @@ export const deleteMatch = (dao as any).deleteMatch;
 export const hasEventMatches = (dao as any).hasEventMatches;
 export const deleteEvent = (dao as any).deleteEvent;
 
+export const listGamesByMatch = (dao as any).listGamesByMatch;
+
 export const insertMatch = dao.insertMatch;
 export const listMatches = dao.listMatches;
 export const updateMatchRules = dao.updateMatchRules;

@@ -1,12 +1,15 @@
 import React from 'react';
-import { View, Text, Modal, Pressable, FlatList, Alert, Dimensions } from 'react-native';
+import {
+  View, Text, Modal, Pressable, FlatList, Alert, Dimensions, Animated, Easing, ScrollView,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Court from '../components/Court';
 import MarkerSheet from '../components/MarkerSheet';
 import type { Orientation, Side, Zone, TapEvent, Point } from '../types';
 import { useRecordsStore } from '../store/records';
 import {
   getMatch, getMatchPlayers, saveMatchState, upsertGameSummary,
-  listRecentRallies, listRalliesOrdered, getLastRally, deleteRally, listDictionary
+  listRecentRallies, listRalliesOrdered, getLastRally, deleteRally, listDictionary, listGamesByMatch,
 } from '../db';
 import {
   createMatch as createServeMatch,
@@ -15,7 +18,7 @@ import {
 } from '../logic/serve';
 import { publishLiveState } from '../lib/supabase';
 
-type Marker = { id: string; rx: number; ry: number; kind: 'win' | 'loss'; meta: any };
+type Marker = { id: string; rx: number; ry: number; kind: 'win' | 'loss'; meta: any; gi: number };
 
 export default function RecordScreen({ navigation }: any) {
   const orientation: Orientation = 'portrait';
@@ -54,48 +57,47 @@ export default function RecordScreen({ navigation }: any) {
   const [intervalShownForGame, setIntervalShownForGame] = React.useState<number | null>(null);
 
   // 黑點與上移
-  const [focus, setFocus] = React.useState<Point | null>(null);         // Court 內部 px
+  const [focus, setFocus] = React.useState<Point | null>(null);
   const courtWrapRef = React.useRef<View>(null);
-  const baseTopRef = React.useRef<number | null>(null);                  // Court 未上移時的螢幕 top
-  const baseHRef = React.useRef<number>(0);                              // Court 高度（僅參考）
-  const [panelH, setPanelH] = React.useState(0);                         // 面板實際高度
-  const [shiftY, setShiftY] = React.useState(0);                         // 整體向上位移
+  const baseTopRef = React.useRef<number | null>(null);
+  const baseHRef = React.useRef<number>(0);
+  const [panelH, setPanelH] = React.useState(0);
+  const [shiftY, setShiftY] = React.useState(0);
 
+  const insets = useSafeAreaInsets();
   const winH = Dimensions.get('window').height;
+
+  // 只顯示當前局／全部落點
+  const [showOnlyCurrent, setShowOnlyCurrent] = React.useState(true);
+  const currentGameNo = (serveState?.currentGameIndex ?? 0) + 1;
+  const filteredMarkers = React.useMemo(
+    () => showOnlyCurrent ? markers.filter(m => m.gi === currentGameNo) : markers,
+    [markers, showOnlyCurrent, currentGameNo]
+  );
+
+  // 局分 chips
+  const [gameRows, setGameRows] = React.useState<Array<{ index_no: number; home_score: number; away_score: number; winner_team: 0|1|null }>>([]);
 
   React.useEffect(() => { init(); }, [currentMatchId, loadRecent]);
 
-  // 量測 Court 的基準位置（只有 shiftY===0 時才更新，避免來回觸發）
   const measureCourtBase = React.useCallback(() => {
-  requestAnimationFrame(() => {
-  courtWrapRef.current?.measureInWindow((x, y, w, h) => {
-  if (!panel && shiftY === 0) {
-  baseTopRef.current = y;
-  baseHRef.current = h;
-  }
-  });
-  });
+    requestAnimationFrame(() => {
+      courtWrapRef.current?.measureInWindow((x, y, w, h) => {
+        if (!panel && shiftY === 0) { baseTopRef.current = y; baseHRef.current = h; }
+      });
+    });
   }, [panel, shiftY]);
-
   React.useEffect(() => { measureCourtBase(); }, [measureCourtBase]);
 
-  // 面板顯示時，若遮住黑點，計算需要的上移量（只在需要時 setShiftY）
   React.useEffect(() => {
-if (!panel) {
-// 面板關閉：復原位移即可（不再重新量測，避免來回）
-if (shiftY !== 0) setShiftY(0);
-return;
-}
-if (!focus || panelH <= 0 || baseTopRef.current == null) return;
-
- const margin = 16;                       // 黑點至少露出的邊界
-const panelTop = winH - panelH;          // 面板上緣（螢幕座標）
-const dotAbsY = baseTopRef.current + focus.y;  // 黑點在螢幕上的絕對 y（不扣位移）
-const needed = Math.max(0, dotAbsY - (panelTop - margin));
-
-// 只在真的有差時才 set（避免浮點誤差造成重複 set）
-if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
-}, [panel, panelH, focus, winH]);           // 注意：不依賴 shiftY
+    if (!panel) { if (shiftY !== 0) setShiftY(0); return; }
+    if (!focus || panelH <= 0 || baseTopRef.current == null) return;
+    const margin = 16;
+    const panelTop = winH - panelH;
+    const dotAbsY = baseTopRef.current + focus.y;
+    const needed = Math.max(0, dotAbsY - (panelTop - margin));
+    if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
+  }, [panel, panelH, focus, winH]);
 
   async function init() {
     if (!currentMatchId) { setLoading(false); return; }
@@ -156,17 +158,24 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
       setUi(getUiSnapshot(s));
       await loadRecent();
 
-      const rows: any[] = await listRecentRallies(currentMatchId, 200);
+      // 最近落點
+      const rows: any[] = await listRecentRallies(currentMatchId, 300);
       const ms: Marker[] = rows
         .map((r) => {
           const rx = r.route_end_rx ?? r.route_start_rx;
           const ry = r.route_end_ry ?? r.route_start_ry;
           if (rx == null || ry == null) return null;
           const kind: 'win' | 'loss' = r.winner_side === 'home' ? 'win' : 'loss';
-          return { id: r.id, rx, ry, kind, meta: JSON.parse(r.meta_json || '{}') };
+          return { id: r.id, rx, ry, kind, meta: JSON.parse(r.meta_json || '{}'), gi: Number(r.game_index) };
         })
         .filter(Boolean) as Marker[];
       setMarkers(ms);
+
+      // 局分 chips
+      try {
+        const gs = await listGamesByMatch(currentMatchId);
+        setGameRows(gs as any);
+      } catch {}
     } catch (e: any) {
       Alert.alert('載入失敗', String(e?.message || e));
     } finally {
@@ -197,12 +206,10 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
     );
   }
 
-  function decideWinInTap(e: TapEvent): boolean {
-    return e.side === 'away';
-  }
+  function decideWinInTap(e: TapEvent): boolean { return e.side === 'away'; }
 
   const openPanel = (isWin: boolean, zone: Zone, tap: TapEvent, defaults: Partial<any>, route?: { start: Point; end: Point }) => {
-    if (tap?.point) setFocus({ x: tap.point.x, y: tap.point.y });  // 顯示黑點
+    if (tap?.point) setFocus({ x: tap.point.x, y: tap.point.y });
     setPanel({ isWin, zone, tapPoint: tap.point, norm: tap.norm, meta: { ...defaults }, route });
   };
 
@@ -277,14 +284,14 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
     try {
       await deleteRally(id);
       setMarkerSheet({ visible: false, data: null });
-      const rows: any[] = await listRecentRallies(currentMatchId!, 200);
+      const rows: any[] = await listRecentRallies(currentMatchId!, 300);
       const ms: Marker[] = rows
         .map((r) => {
           const rx = r.route_end_rx ?? r.route_start_rx;
           const ry = r.route_end_ry ?? r.route_start_ry;
           if (rx == null || ry == null) return null;
           const kind: 'win' | 'loss' = r.winner_side === 'home' ? 'win' : 'loss';
-          return { id: r.id, rx, ry, kind, meta: JSON.parse(r.meta_json || '{}') };
+          return { id: r.id, rx, ry, kind, meta: JSON.parse(r.meta_json || '{}'), gi: Number(r.game_index) };
         })
         .filter(Boolean) as Marker[];
       setMarkers(ms);
@@ -317,7 +324,7 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
       });
 
       const beforeIdx = serveState.currentGameIndex;
-      const next = nextRally({ ...serveState }, (winnerSide === 'home') ? 0 : 1);
+      let next = nextRally({ ...serveState }, (winnerSide === 'home') ? 0 : 1);
       setServeState(next);
       setUi(getUiSnapshot(next));
       try { publishLiveState(currentMatchId!, getUiSnapshot(next)); } catch {}
@@ -357,18 +364,26 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
         deciderSwitched: !!cur.deciderSidesSwitched,
       });
 
+      if (panel.norm) {
+        const giForMarker = (serveState.currentGameIndex ?? 0) + 1;
+        setMarkers((ms) => [
+          { id: Math.random().toString(36).slice(2), rx: panel.norm!.x, ry: panel.norm!.y, kind: panel.isWin ? 'win' : 'loss', meta: panel.meta, gi: giForMarker },
+          ...ms,
+        ]);
+      }
+
       await saveMatchState(currentMatchId!, serialize(next));
 
-      // 關閉：復原位移 + 清黑點
       setPanel(null);
       setShiftY(0);
       setFocus(null);
+
+      try { await loadRecent(); } catch {}
+      try { const gs = await listGamesByMatch(currentMatchId!); setGameRows(gs as any); } catch {}
     } catch (e: any) {
       Alert.alert('儲存失敗', String(e?.message || e));
     }
   };
-
-  const last = records.slice(0, 5);
 
   const servingTeam = ui?.servingTeam ?? 0;
   const serverTeam = ui?.server?.team ?? 0;
@@ -382,12 +397,99 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
   const posA = ui?.positions?.teamA, posB = ui?.positions?.teamB;
   const A_right = typeof posA?.right === 'number' ? serveState?.teams?.[0]?.players?.[posA.right]?.name : '';
   const A_left  = typeof posA?.left  === 'number' ? serveState?.teams?.[0]?.players?.[posA.left ]?.name : '';
-  const B_right = typeof posB?.right === 'number' ? serveState?.teams?.[1]?.players?.[posB.right]?.name : '';
-  const B_left  = typeof posB?.left  === 'number' ? serveState?.teams?.[1]?.players?.[posB.left ]?.name : '';
+  const B_right = typeof posB?.right === 'number' ? serveState?.teams?.[1]?.players?.[posB?.right]?.name : '';
+  const B_left  = typeof posB?.left  === 'number' ? serveState?.teams?.[1]?.players?.[posB?.left ]?.name : '';
+
+  // 右側滑出記錄側欄
+  const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [historyRows, setHistoryRows] = React.useState<any[]>([]);
+  const histAnim = React.useRef(new Animated.Value(0)).current;
+  const sheetW = Math.min(320, Math.floor(Dimensions.get('window').width * 0.85));
+
+  const openHistory = React.useCallback(async () => {
+    try {
+      if (currentMatchId) {
+        const rows = await listRalliesOrdered(currentMatchId);
+        setHistoryRows([...rows].reverse());
+      }
+    } catch {}
+    setHistoryOpen(true);
+    Animated.timing(histAnim, { toValue: 1, duration: 220, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+  }, [currentMatchId, histAnim]);
+
+  const closeHistory = React.useCallback(() => {
+    Animated.timing(histAnim, { toValue: 0, duration: 200, easing: Easing.in(Easing.cubic), useNativeDriver: true })
+      .start(() => setHistoryOpen(false));
+  }, [histAnim]);
+
+  const sheetTx = histAnim.interpolate({ inputRange: [0, 1], outputRange: [sheetW, 0] });
+  const overlayOpacity = histAnim.interpolate({ inputRange: [0, 1], outputRange: [0, 0.35] });
+
+  const Badge = ({ kind }: { kind: 'win' | 'loss' }) => (
+    <View style={{ width: 10, height: 10, borderRadius: 5, backgroundColor: kind === 'win' ? '#1976d2' : '#d32f2f', marginRight: 8, marginTop: 6 }} />
+  );
+
+  const Row = ({ item }: { item: any }) => {
+    const meta = safeMeta(item.meta_json);
+    const isWin = item.winner_side === 'home';
+    const color = isWin ? '#1976d2' : '#d32f2f';
+    const label = `第${item.game_index}局 #${item.rally_no} ${isWin ? '得分' : '失分'} 區${String(item.end_zone)} ${meta.shotType || ''} ${meta.forceType || ''} ${meta.errorReason || ''}`;
+    return (
+      <View style={{ flexDirection: 'row', alignItems: 'flex-start', paddingVertical: 8, borderBottomWidth: 1, borderColor: '#f2f2f2' }}>
+        <Badge kind={isWin ? 'win' : 'loss'} />
+        <Text style={{ color }}>{label}</Text>
+      </View>
+    );
+  };
+
+  // 局分 Chips（含「落點篩選」小 chip）
+  const renderGameChips = () => {
+    const map = new Map<number, { a: number; b: number; w: 0 | 1 | null }>();
+    gameRows.forEach(g => map.set(Number(g.index_no), { a: Number(g.home_score||0), b: Number(g.away_score||0), w: (g.winner_team==0||g.winner_team==1)?(g.winner_team as 0|1):null }));
+    if (serveState) {
+      serveState.games.forEach((g, i) => {
+        const idx = i + 1;
+        const cur = map.get(idx) || { a: 0, b: 0, w: null };
+        const [a, b] = g.points || [0, 0];
+        map.set(idx, { a, b, w: (g.winner==0||g.winner==1)?(g.winner as 0|1):cur.w });
+      });
+    }
+    const list = Array.from(map.entries()).sort((a,b)=>a[0]-b[0]);
+    if (list.length === 0) return null;
+
+    return (
+      <View style={{ height: 36 }}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 12, alignItems: 'center' }}>
+          {list.map(([i, g]) => {
+            const isCur = i === currentGameNo;
+            const bg = isCur ? '#1976d2' : '#eceff1';
+            const fg = isCur ? '#fff' : '#333';
+            const ring = g.w==null ? 'transparent' : (g.w===0 ? '#42a5f5' : '#ef5350');
+            return (
+              <View key={i} style={{ height: 28, paddingHorizontal: 10, borderRadius: 14, backgroundColor: bg, marginRight: 8, flexDirection:'row', alignItems:'center' }}>
+                {g.w!=null && <View style={{ width:6, height:6, borderRadius:3, backgroundColor:ring, marginRight:6 }} />}
+                <Text style={{ color: fg, fontSize: 13 }}>{`G${i}  ${g.a} - ${g.b}`}</Text>
+              </View>
+            );
+          })}
+          {/* 右側：落點篩選 Chip（不佔版面） */}
+          <Pressable
+            onPress={() => setShowOnlyCurrent(v => !v)}
+            style={{
+              height: 28, paddingHorizontal: 10, borderRadius: 14, marginLeft: 2,
+              backgroundColor: showOnlyCurrent ? '#9e9e9e' : '#1976d2', alignItems: 'center', justifyContent: 'center'
+            }}
+          >
+            <Text style={{ color: '#fff', fontSize: 12 }}>{showOnlyCurrent ? '本局落點' : '全部落點'}</Text>
+          </Pressable>
+        </ScrollView>
+      </View>
+    );
+  };
 
   return (
     <View style={{ flex: 1 }}>
-      {/* 可位移內容（頂部 + 球場 + 最近五筆） */}
+      {/* 可位移內容（頂部 + 局分 Chips + 球場） */}
       <View style={{ flex: 1, transform: [{ translateY: -shiftY }] }}>
         <View style={{ paddingHorizontal: 12, paddingTop: 8, paddingBottom: 6, backgroundColor: '#fafafa', borderBottomWidth: 1, borderColor: '#eee' }}>
           <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
@@ -396,15 +498,22 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
               <Pressable onPress={undoLast} style={{ paddingVertical:6, paddingHorizontal:10, backgroundColor:'#455a64', borderRadius:8, marginRight:8 }}>
                 <Text style={{ color:'#fff' }}>撤銷上一筆</Text>
               </Pressable>
-              <Pressable onPress={()=>navigation.navigate('Analysis',{ matchId: currentMatchId })} style={{ paddingVertical:6, paddingHorizontal:10, backgroundColor:'#1976d2', borderRadius:8 }}>
+              <Pressable onPress={()=>navigation.navigate('Analysis',{ matchId: currentMatchId })} style={{ paddingVertical:6, paddingHorizontal:10, backgroundColor:'#1976d2', borderRadius:8, marginRight:8 }}>
                 <Text style={{ color:'#fff' }}>分析</Text>
+              </Pressable>
+              <Pressable onPress={openHistory} style={{ paddingVertical:6, paddingHorizontal:10, backgroundColor:'#00695c', borderRadius:8 }}>
+                <Text style={{ color:'#fff' }}>記錄</Text>
               </Pressable>
             </View>
           </View>
           <Text style={{ color: '#555', marginTop: 6 }}>
-            發球方：{servingTeam === 0 ? '主隊' : '客隊'}，發：{serveState?.teams?.[serverTeam]?.players?.[serverIdx0]?.name || ''}（{serverCourt}），接：{serveState?.teams?.[receiverTeam]?.players?.[receiverIdx0]?.name || ''}，比分：{scoreA} - {scoreB}
+            發球方：{ui?.servingTeam === 0 ? '主隊' : '客隊'}，發：
+            {serveState?.teams?.[serverTeam]?.players?.[serverIdx0]?.name || ''}（{serverCourt}），接：
+            {serveState?.teams?.[receiverTeam]?.players?.[receiverIdx0]?.name || ''}，比分：{ui?.scoreA ?? 0} - {ui?.scoreB ?? 0}
           </Text>
         </View>
+
+        {renderGameChips()}
 
         <View ref={courtWrapRef} onLayout={measureCourtBase} style={{ flex: 1 }}>
           <Court
@@ -415,38 +524,41 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
             routeHover={routeHover}
             onHover={setRouteHover}
             onTap={onTap}
-            markers={markers}
+            markers={filteredMarkers}
             onPressMarker={onPressMarker}
             overlay={{
-              homeRight: A_right || '',
-              homeLeft: A_left || '',
-              awayRight: B_right || '',
-              awayLeft: B_left || '',
+              homeRight: (typeof ui?.positions?.teamA?.right === 'number' ? serveState?.teams?.[0]?.players?.[ui.positions.teamA.right]?.name : '') || '',
+              homeLeft:  (typeof ui?.positions?.teamA?.left  === 'number' ? serveState?.teams?.[0]?.players?.[ui.positions.teamA.left ]?.name : '') || '',
+              awayRight: (typeof ui?.positions?.teamB?.right === 'number' ? serveState?.teams?.[1]?.players?.[ui.positions.teamB.right]?.name : '') || '',
+              awayLeft:  (typeof ui?.positions?.teamB?.left  === 'number' ? serveState?.teams?.[1]?.players?.[ui.positions.teamB.left ]?.name : '') || '',
               server: ui?.server ? { team: ui.server.team as 0|1, index: ui.server.index as 0|1 } : undefined,
               receiver: ui?.receiver ? { team: ui.receiver.team as 0|1, index: ui.receiver.index as 0|1 } : undefined,
               positions: {
-                A: { right: (posA?.right ?? 0) as 0|1, left: (posA?.left ?? 1) as 0|1 },
-                B: { right: (posB?.right ?? 0) as 0|1, left: (posB?.left ?? 1) as 0|1 },
+                A: { right: (ui?.positions?.teamA?.right ?? 0) as 0|1, left: (ui?.positions?.teamA?.left ?? 1) as 0|1 },
+                B: { right: (ui?.positions?.teamB?.right ?? 0) as 0|1, left: (ui?.positions?.teamB?.left ?? 1) as 0|1 },
               },
               opacity: 0.85,
             }}
             focusPoint={focus}
           />
         </View>
-
-        <View style={{ padding: 12, borderTopWidth: 1, borderColor: '#eee' }}>
-          <Text style={{ fontWeight: '600', marginBottom: 8 }}>最近 5 筆</Text>
-          <FlatList
-            data={records.slice(0, 5)}
-            keyExtractor={(i) => i.id}
-            renderItem={({ item }) => (
-              <Text>
-                第{item.gameIndex}局 #{item.rallyNo} {item.winnerSide === 'home' ? '得分' : '失分'} 區{String(item.endZone)} {item.meta.shotType || ''} {item.meta.forceType || ''} {item.meta.errorReason || ''}
-              </Text>
-            )}
-          />
-        </View>
       </View>
+
+      {(historyOpen || (histAnim as any)._value > 0) && (
+        <View pointerEvents="box-none" style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}>
+          <Animated.View pointerEvents={historyOpen ? 'auto' : 'none'} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0, backgroundColor: '#000', opacity: overlayOpacity }} />
+          <Pressable onPress={closeHistory} style={{ position: 'absolute', left: 0, top: 0, right: 0, bottom: 0 }} />
+          <Animated.View style={{ position: 'absolute', right: 0, top: insets.top + 8, bottom: insets.bottom + 8, width: sheetW, backgroundColor: '#fff', borderTopLeftRadius: 16, borderBottomLeftRadius: 16, shadowColor: '#000', shadowOpacity: 0.2, shadowOffset: { width: -2, height: 0 }, shadowRadius: 8, elevation: 6, transform: [{ translateX: sheetTx }], overflow: 'hidden' }}>
+            <View style={{ paddingHorizontal: 12, paddingVertical: 10, borderBottomWidth: 1, borderColor: '#eee', flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Text style={{ fontSize: 16, fontWeight: '700' }}>記錄清單</Text>
+              <Pressable onPress={closeHistory} style={{ paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#1976d2', borderRadius: 8 }}>
+                <Text style={{ color:'#fff' }}>關閉</Text>
+              </Pressable>
+            </View>
+            <FlatList contentContainerStyle={{ padding: 12 }} data={historyRows} keyExtractor={(i:any)=>i.id} renderItem={({ item }:any)=><Row item={item}/>} />
+          </Animated.View>
+        </View>
+      )}
 
       <MetaPanel
         visible={!!panel}
@@ -467,12 +579,7 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
         onMeasure={setPanelH}
       />
 
-      <MarkerSheet
-        visible={markerSheet.visible}
-        data={markerSheet.data}
-        onClose={() => setMarkerSheet({ visible:false, data:null })}
-        onDelete={async (id) => { await handleDeleteRally(id); setShiftY(0); setFocus(null); }}
-      />
+      <MarkerSheet visible={markerSheet.visible} data={markerSheet.data} onClose={() => setMarkerSheet({ visible:false, data:null })} onDelete={async (id)=>{ await handleDeleteRally(id); setShiftY(0); setFocus(null); }} />
 
       {endModal && (
         <Modal visible transparent animationType="fade" onRequestClose={() => setEndModal(null)}>
@@ -481,7 +588,7 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
               <Text style={{ fontSize:16, fontWeight:'600', marginBottom:8 }}>
                 {endModal.type === 'match' ? '比賽結束' : `第 ${endModal.gameIndex} 局結束`}
               </Text>
-              <Text style={{ marginBottom:12 }}>比分：{endModal.score[0]} - {endModal.score[1]}</Text>
+              <Text style={{ marginBottom:12 }}>比分：{ui?.scoreA ?? 0} - {ui?.scoreB ?? 0}</Text>
               <Pressable onPress={()=>setEndModal(null)} style={{ alignSelf:'flex-end', paddingVertical:8, paddingHorizontal:14, backgroundColor:'#1976d2', borderRadius:8 }}>
                 <Text style={{ color:'#fff' }}>{endModal.type==='match' ? '完成' : '開始下一局'}</Text>
               </Pressable>
@@ -493,6 +600,7 @@ if (Math.abs(needed - shiftY) > 0.5) setShiftY(needed);
   );
 }
 
+/* 面板（底部按鈕固定） */
 function MetaPanel({
   visible, isWin, meta, onChange, onCancel, onSave, showErrorReason, players, showLastHitter, options, onMeasure,
 }: {
@@ -502,88 +610,42 @@ function MetaPanel({
   options: { shotTypes: string[]; errorReasons: string[] };
   onMeasure?: (h: number) => void;
 }) {
+  const insets = useSafeAreaInsets();
   const forceOptions = isWin ? ['主動得分', '對手失誤'] : ['主動失誤', '受迫失誤'];
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={{ flex: 1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
-        <View
-          style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, padding:16, maxHeight:'45%' }}
-          onLayout={(e) => onMeasure?.(e.nativeEvent.layout.height)}
-        >
-          <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>{isWin ? '得分' : '失分'}選項</Text>
-          <Group title="球種">
-            <ChipList options={options.shotTypes} value={meta.shotType} onSelect={(v)=>onChange({ ...meta, shotType: v===meta.shotType? undefined: v })} />
-          </Group>
-          <Group title="正手/反手">
-            <ChipList options={['正手','反手']} value={meta.hand} onSelect={(v)=>onChange({ ...meta, hand: v as any })} />
-          </Group>
-          <Group title={isWin ? '是否主動得分' : '是否主動失誤'}>
-            <ChipList options={forceOptions} value={meta.forceType} onSelect={(v)=>onChange({ ...meta, forceType: v })} />
-          </Group>
-          {!isWin && showErrorReason && (
-            <Group title="失誤原因">
-              <ChipList options={options.errorReasons as any} value={meta.errorReason} onSelect={(v)=>onChange({ ...meta, errorReason: v })} />
-            </Group>
-          )}
-          {showLastHitter && (
-            <Group title="最後擊球選手">
-              <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
-                {players.map(p => (
-                  <Pressable
-                    key={p.id}
-                    onPress={()=>onChange({ ...meta, lastHitter: (meta.lastHitter===p.id? undefined : p.id) })}
-                    style={{
-                      paddingVertical:6, paddingHorizontal:10, borderRadius:14,
-                      borderWidth:1, borderColor: meta.lastHitter===p.id? '#1976d2':'#ccc',
-                      backgroundColor: meta.lastHitter===p.id? 'rgba(25,118,210,0.1)':'#fff',
-                      marginRight:8, marginBottom:8,
-                    }}
-                  >
-                    <Text>{p.name || p.id}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </Group>
-          )}
-          <View style={{ flexDirection:'row', justifyContent:'flex-end', marginTop:12 }}>
-            <Pressable onPress={onCancel} style={{ padding:12, marginRight:8 }}>
-              <Text>取消</Text>
-            </Pressable>
-            <Pressable onPress={onSave} style={{ padding:12, backgroundColor:'#1976d2', borderRadius:8 }}>
-              <Text style={{ color:'#fff' }}>儲存</Text>
-            </Pressable>
+        <View style={{ backgroundColor:'#fff', borderTopLeftRadius:16, borderTopRightRadius:16, maxHeight:'65%', overflow:'hidden' }} onLayout={(e)=>onMeasure?.(e.nativeEvent.layout.height)}>
+          <View style={{ paddingHorizontal:16, paddingTop:12, paddingBottom:8 }}>
+            <Text style={{ fontSize:16, fontWeight:'600' }}>{isWin?'得分選項':'失分選項'}</Text>
+          </View>
+          <View style={{ flexGrow:1 }}>
+            <FlatList contentContainerStyle={{ paddingHorizontal:16, paddingBottom:12 }} data={[0]} keyExtractor={()=>'panel-content'} renderItem={()=>(<View>
+              <Group title="球種"><ChipList options={options.shotTypes} value={meta.shotType} onSelect={(v)=>onChange({ ...meta, shotType: v===meta.shotType? undefined: v })} /></Group>
+              <Group title="正手/反手"><ChipList options={['正手','反手']} value={meta.hand} onSelect={(v)=>onChange({ ...meta, hand: v as any })} /></Group>
+              <Group title={isWin?'是否主動得分':'是否主動失誤'}><ChipList options={isWin?['主動得分','對手失誤']:['主動失誤','受迫失誤']} value={meta.forceType} onSelect={(v)=>onChange({ ...meta, forceType: v })} /></Group>
+              {!isWin && showErrorReason && (<Group title="失誤原因"><ChipList options={options.errorReasons as any} value={meta.errorReason} onSelect={(v)=>onChange({ ...meta, errorReason: v })} /></Group>)}
+            </View>)} />
+          </View>
+          <View style={{ borderTopWidth:1, borderColor:'#eee', paddingHorizontal:12, paddingTop:10, paddingBottom:Math.max(12,insets.bottom+10), flexDirection:'row', justifyContent:'flex-end' }}>
+            <Pressable onPress={onCancel} style={{ padding:12, marginRight:8 }}><Text>取消</Text></Pressable>
+            <Pressable onPress={onSave} style={{ padding:12, backgroundColor:'#1976d2', borderRadius:8 }}><Text style={{ color:'#fff' }}>儲存</Text></Pressable>
           </View>
         </View>
       </View>
     </Modal>
   );
 }
-
-function Group({ title, children }: any) {
-  return (
-    <View style={{ marginBottom: 10 }}>
-      <Text style={{ marginBottom: 6, color: '#333' }}>{title}</Text>
-      {children}
-    </View>
-  );
-}
+function Group({ title, children }: any) { return (<View style={{ marginBottom: 10 }}><Text style={{ marginBottom: 6, color: '#333' }}>{title}</Text>{children}</View>); }
 function ChipList({ options, value, onSelect }: { options: string[]; value?: string; onSelect: (v: string) => void }) {
   return (
     <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
       {options.map((opt) => (
-        <Pressable
-          key={opt}
-          onPress={() => onSelect(opt)}
-          style={{
-            paddingVertical:6, paddingHorizontal:10, borderRadius:14,
-            borderWidth:1, borderColor: value===opt? '#1976d2':'#ccc',
-            backgroundColor: value===opt? 'rgba(25,118,210,0.1)':'#fff',
-            marginRight:8, marginBottom:8,
-          }}
-        >
+        <Pressable key={opt} onPress={() => onSelect(opt)} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:14, borderWidth:1, borderColor: value===opt? '#1976d2':'#ccc', backgroundColor: value===opt? 'rgba(25,118,210,0.1)':'#fff', marginRight:8, marginBottom:8 }}>
           <Text>{opt}</Text>
         </Pressable>
       ))}
     </View>
   );
 }
+function safeMeta(json: string) { try { return JSON.parse(json || '{}'); } catch { return {}; } }

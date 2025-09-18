@@ -591,3 +591,14 @@ export async function deleteMatch(matchId: string): Promise<void> {
     throw e;
   }
 }
+
+export async function listGamesByMatch(matchId: string) {
+  const d = await openDB();
+  const [res] = await d.executeSql(
+    'SELECT index_no,home_score,away_score,winner_team FROM games WHERE match_id=? ORDER BY index_no ASC',
+    [matchId]
+  );
+  const out: any[] = [];
+  for (let i=0;i<res.rows.length;i++) out.push(res.rows.item(i));
+  return out;
+}

@@ -17,6 +17,19 @@ import { useHeaderHeight } from '@react-navigation/elements';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getMatch, getMatchPlayers, upsertMatchPlayers, updateStartConfigs } from '../db';
 
+const C = {
+bg: '#111',
+card: '#222',
+border: '#333',
+field: '#111',
+fieldBorder: '#444',
+text: '#fff',
+sub: '#ddd',
+hint: '#888',
+chipOn: '#90caf9',
+chipOff: '#555',
+};
+
 type PlayerForm = { name: string; gender: 'M' | 'F' | 'U'; handedness: 'L' | 'R' | 'U' };
 
 export default function PlayerSetupScreen() {
@@ -159,6 +172,7 @@ onScroll={onScroll}
 scrollEventThrottle={16}
 contentContainerStyle={{ padding: 16, paddingBottom: (insets.bottom || 16) + 320 }}
 keyboardShouldPersistTaps="handled"
+style={{ flex: 1, backgroundColor: C.bg }}
 >
 <Text style={{ fontSize: 18, fontWeight: '600', marginBottom: 12 }}>球員設定</Text>
 
@@ -221,25 +235,27 @@ onChange(next);
 };
 
 return (
-<View style={{ borderWidth: 1, borderColor: '#eee', borderRadius: 12, padding: 12, marginBottom: 12 }}>
-<Text style={{ fontWeight: '600', marginBottom: 8 }}>{title}</Text>
+<View style={{ borderWidth: 1, borderColor: C.border, backgroundColor: C.card, borderRadius: 12, padding: 12, marginBottom: 12 }}>
+<Text style={{ fontWeight: '600', marginBottom: 8, color: C.text }}>{title}</Text>
 {[0, 1].map((i) => (
 <View key={i} style={{ marginBottom: 10 }}>
-<Text style={{ marginBottom: 6 }}>球員 #{i + 1}</Text>
+<Text style={{ marginBottom: 6, color: C.sub }}>球員 #{i + 1}</Text>
 <TextInput
 placeholder="姓名"
+placeholderTextColor={C.hint}
 value={players[i].name}
 onChangeText={(t) => setP(i as 0 | 1, { name: t })}
 onLayout={onNameLayout(nameKeys[i as 0 | 1])}
 onFocus={onNameFocus(nameKeys[i as 0 | 1])}
 style={{
 borderWidth: 1,
-borderColor: '#ccc',
+borderColor: C.fieldBorder,
 borderRadius: 8,
 paddingHorizontal: 10,
 paddingVertical: 10,
 marginBottom: 6,
-backgroundColor: '#fff',
+backgroundColor: C.field,
+color: C.text,
 }}
 returnKeyType="done"
 />
@@ -256,11 +272,12 @@ returnKeyType="done"
 </View>
 ))}
 
-  <Text style={{ marginTop: 4, marginBottom: 6 }}>偶數分站右（Right when Even）：</Text>
-  <Row>
-    <Badge onPress={() => setRightWhenEven(0)} active={rightWhenEven === 0} text="#1 在右" />
-    <Badge onPress={() => setRightWhenEven(1)} active={rightWhenEven === 1} text="#2 在右" />
-  </Row>
+<Text style={{ marginTop: 4, marginBottom: 6, color: C.sub }}>偶數分站右（Right when Even）：</Text>
+<Row>
+<Badge onPress={() => setRightWhenEven(0)} active={rightWhenEven === 0} text="#1 在右" />
+<Badge onPress={() => setRightWhenEven(1)} active={rightWhenEven === 1} text="#2 在右" />
+</Row>
+
 </View>
 );
 }
@@ -277,13 +294,13 @@ paddingVertical: 8,
 paddingHorizontal: 12,
 borderRadius: 16,
 borderWidth: 1,
-borderColor: active ? '#1976d2' : '#ccc',
-backgroundColor: active ? 'rgba(25,118,210,0.1)' : '#fff',
+borderColor: active ? C.chipOn : C.chipOff,
+backgroundColor: active ? 'rgba(144,202,249,0.15)' : C.card,
 marginRight: 8,
 marginBottom: 8,
-}}
->
-<Text style={{ color: '#333' }}>{text}</Text>
+}}>
+
+<Text style={{ color: C.text }}>{text}</Text>
 </Pressable>
 );
 }

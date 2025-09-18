@@ -125,103 +125,110 @@ const onScroll = (_e: NativeSyntheticEvent<NativeScrollEvent>) => {};
 
 return (
 <KeyboardAvoidingView
-style={{ flex: 1 }}
+style={{ flex: 1, backgroundColor: '#111' }}
 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-keyboardVerticalOffset={Platform.OS === 'ios' ? KAV_OFFSET : 0}
->
-{/* 內容：預留底部輸入列高度，避免被遮住 */}
-<View style={{ flex: 1, padding: 12, paddingBottom: INPUT_BAR_H }}>
-{loading ? (
-<View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-<ActivityIndicator />
-</View>
-) : (
-<FlatList
-inverted
-data={items}
-keyExtractor={(i) => i.id || String(i.created_at)}
-keyboardShouldPersistTaps="handled"
-onScroll={onScroll}
-renderItem={({ item }) => (
-<View
-style={{
-padding: 10,
-borderRadius: 8,
-backgroundColor: '#f5f5f5',
-marginBottom: 8,
-}}
->
-<Text style={{ color: '#555', marginBottom: 4 }}>
-{item.user || '匿名'} · {new Date(item.created_at).toLocaleTimeString()}
-</Text>
-<Text>{item.text}</Text>
-</View>
-)}
-/>
-)}
+keyboardVerticalOffset={Platform.OS === 'ios' ? KAV_OFFSET : 0}>
+
+{/* 內容：預留底部輸入列高度 */}
+<View style={{ flex: 1, padding: 12, paddingBottom: INPUT_BAR_H, backgroundColor: '#111' }}>
+  {loading ? (
+    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
+      <ActivityIndicator color="#fff" />
+    </View>
+  ) : (
+    <FlatList
+      inverted
+      data={items}
+      keyExtractor={(i) => i.id || String(i.created_at)}
+      keyboardShouldPersistTaps="handled"
+      onScroll={onScroll}
+      renderItem={({ item }) => (
+        <View
+          style={{
+            padding: 10,
+            borderRadius: 8,
+            backgroundColor: '#222',
+            marginBottom: 8,
+          }}
+        >
+          <Text style={{ color: '#aaa', marginBottom: 4 }}>
+            {item.user || '匿名'} · {new Date(item.created_at).toLocaleTimeString()}
+          </Text>
+          <Text style={{ color: '#fff' }}>{item.text}</Text>
+        </View>
+      )}
+    />
+  )}
 </View>
 
-  {/* 底部輸入列：固定在底部，會跟 KeyboardAvoidingView 一起上移 */}
-  <View
+{/* 底部輸入列（深色） */}
+<View
+  style={{
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    top: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    height: INPUT_BAR_H,
+    backgroundColor: '#222',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: '#333',
+  }}
+>
+  <TextInput
+    placeholder="名稱（可空）"
+    placeholderTextColor="#888"
+    value={name}
+    onChangeText={setName}
     style={{
-      position: 'absolute',
-      left: 12,
-      right: 12,
-      top: 2,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      height: INPUT_BAR_H,
+      width: 140,
+      height: INPUT_BAR_H - 10,
+      borderWidth: 1,
+      borderColor: '#444',
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      color: '#fff',
+      backgroundColor: '#111',
+    }}
+    autoCapitalize="none"
+    returnKeyType="next"
+  />
+  <TextInput
+    placeholder="輸入訊息…"
+    placeholderTextColor="#888"
+    value={text}
+    onChangeText={setText}
+    onSubmitEditing={send}
+    style={{
+      flex: 1,
+      height: INPUT_BAR_H - 10,
+      borderWidth: 1,
+      borderColor: '#444',
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      color: '#fff',
+      backgroundColor: '#111',
+    }}
+    returnKeyType="send"
+    blurOnSubmit={false}
+  />
+  <Pressable
+    onPress={send}
+    disabled={!text.trim()}
+    style={{
+      backgroundColor: text.trim() ? '#1976d2' : '#555',
+      paddingHorizontal: 16,
+      height: INPUT_BAR_H - 10,
+      borderRadius: 8,
+      justifyContent: 'center',
     }}
   >
-    <TextInput
-      placeholder="名稱（可空）"
-      value={name}
-      onChangeText={setName}
-      style={{
-        width: 140,
-        height: INPUT_BAR_H,
-        borderWidth: 1,
-        borderColor: '#ccc',
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        backgroundColor: '#fff',
-      }}
-      autoCapitalize="none"
-      returnKeyType="next"
-    />
-    <TextInput
-      placeholder="輸入訊息…"
-      value={text}
-      onChangeText={setText}
-      onSubmitEditing={send}
-      style={{
-        flex: 1,
-        height: INPUT_BAR_H,
-        borderWidth: 1,
-        borderColor: '#ccc',
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        backgroundColor: '#fff',
-      }}
-      returnKeyType="send"
-      blurOnSubmit={false}
-    />
-    <Pressable
-      onPress={send}
-      disabled={!text.trim()}
-      style={{
-        backgroundColor: text.trim() ? '#1976d2' : '#90a4ae',
-        paddingHorizontal: 16,
-        height: INPUT_BAR_H,
-        borderRadius: 8,
-        justifyContent: 'center',
-      }}
-    >
-      <Text style={{ color: '#fff' }}>送出</Text>
-    </Pressable>
-  </View>
-</KeyboardAvoidingView>
-);
+    <Text style={{ color: '#fff' }}>送出</Text>
+  </Pressable>
+</View>
+</KeyboardAvoidingView> );
 }
-

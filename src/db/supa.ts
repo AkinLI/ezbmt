@@ -348,11 +348,14 @@ const { count, error } = await supa
 if (error) throw error;
 return (count || 0) > 0;
 }
+
 export async function deleteEvent(eventId: string): Promise<void> {
-  // 前端已先檢查無場次；這裡順手清掉 event_members 以避免 FK 堵住
-  try { await supa.from('event_members').delete().eq('event_id', eventId); } catch(_e) {}
-  const { error } = await supa.from('events').delete().eq('id', eventId);
-  if (error) throw error;
+const { data, error } = await supa.rpc('delete_event_safe', { p_event_id: eventId });
+if (error) throw error;
+if (data && data.deleted === false) {
+if (data.reason === 'HAS_MATCHES') throw new Error('HAS_MATCHES');
+throw new Error('DELETE_FAILED');
+}
 }
 
 /* 新增：是否有記錄、刪除場次（含相依資料） */
@@ -387,3 +390,11 @@ export async function listGamesByMatch(matchId: string) {
   if (error) throw error;
   return data || [];
 }
+
+type LiveSnapshot = {
+scoreA: number; scoreB: number;
+servingTeam: 0|1;
+server?: { team:0|1; index:0|1; court:'R'|'L' };
+receiver?: { team:0|1; index:0|1; court:'R'|'L' };
+players?: Array<{ name?: string }>;
+};

@@ -1,23 +1,6 @@
-import React from 'react';
-import {
-View,
-Text,
-TextInput,
-Pressable,
-Alert,
-Image,
-SafeAreaView,
-KeyboardAvoidingView,
-Platform,
-ScrollView,
-ActivityIndicator,
-StatusBar,
-} from 'react-native';
-import { supa, getCurrentUser } from '../lib/supabase';
-//import IntroShuttle from '../components/IntroShuttle';
-
-
-
+ import React from 'react'; 
+ import { View, Text, TextInput, Pressable, Alert, Image, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, StatusBar, } from 'react-native'; 
+ import { supa, getCurrentUser } from '../lib/supabase';
 const ACTION_IMG = require('../images/action.png'); // 確認路徑
 
 export default function AuthScreen({ navigation }: any) {
@@ -34,21 +17,35 @@ if (u) navigation.replace('Events');
 }, [navigation]);
 
 const submit = async () => {
-if (!email.trim() || !password) return;
+const addr = (email ?? '').trim();
+const pwd = password;
+if (!addr || !pwd) return;
 setBusy(true);
 try {
-if (mode === 'signin') {
-const { error } = await supa.auth.signInWithPassword({ email: email.trim(), password });
-if (error) throw error;
-} else {
-const { error } = await supa.auth.signUp({ email: email.trim(), password });
-if (error) throw error;
-}
-navigation.replace('Events');
+// 和 Supabase 後台 Additional Redirect URLs 對應的 Deep Link
+const redirectTo = Platform.select({
+ios: 'ezbmt://auth-callback',
+android: 'ezbmt://auth-callback',
+default: 'ezbmt://auth-callback',
+}) as string;
+
+  if (mode === 'signin') {
+    const { error } = await supa.auth.signInWithPassword({ email: addr, password: pwd });
+    if (error) throw error;
+  } else {
+    const { error } = await supa.auth.signUp({
+      email: addr,
+      password: pwd,
+      options: { emailRedirectTo: redirectTo },
+    });
+    if (error) throw error;
+    Alert.alert('已送出確認信', '請到信箱點擊驗證連結完成註冊');
+  }
+  navigation.replace('Events');
 } catch (e: any) {
-Alert.alert('失敗', String(e?.message || e));
+  Alert.alert('失敗', String(e?.message || e));
 } finally {
-setBusy(false);
+  setBusy(false);
 }
 };
 

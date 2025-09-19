@@ -291,51 +291,11 @@ return (prof||[]).map((p:any)=>({ user_id: p.id as string, name: (p.name || (p.i
 }
 
 /* Edge Function: 邀請成員（Email） */
-export async function inviteEventMemberByEmail(args: {
-eventId: string;
-email: string;
-role: 'owner'|'coach'|'recorder'|'player'|'viewer';
-}) {
-// 1) 取目前使用者 access_token
-const { data: sess } = await supa.auth.getSession();
-const token = sess?.session?.access_token || null;
-if (!token) throw new Error('Not logged in');
-
-// 2) 直接打 Edge Function HTTP 端點，讀回應文字
-const url = `${SUPABASE_URL}/functions/v1/invite-by-email`;
-const res = await fetch(url, {
-method: 'POST',
-headers: {
-'Content-Type': 'application/json',
-// 必須帶 Bearer <access_token>
-'Authorization': `Bearer ${token}`,
-},
-body: JSON.stringify(args),
-});
-
-const text = await res.text();
-
-// 3) 非 2xx => 把狀態碼與 body 一起丟出去，UI 才看得到
-if (!res.ok) {
-// 盡量把 Edge 回的 JSON error 轉成更乾淨訊息
-try {
-const j = JSON.parse(text);
-const msg = j?.error || j?.message || text || `HTTP ${res.status}`;
-throw new Error(msg);
-} catch {
-throw new Error(`${res.status} ${res.statusText}: ${text || 'Edge error'}`);
+export async function inviteEventMemberByEmail(args: { eventId: string; email: string; role: 'owner'|'coach'|'recorder'|'player'|'viewer' }) {
+const { data, error } = await supa.functions.invoke('invite-by-email', { body: args });
+if (error) throw error;
+return data ?? {};
 }
-}
-
-// 4) 成功回傳 JSON
-try {
-return JSON.parse(text);
-} catch {
-return { ok: true };
-}
-}
-
-
 
 
 // 讀「我的賽事」（RPC）

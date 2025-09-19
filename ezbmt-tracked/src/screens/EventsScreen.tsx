@@ -211,11 +211,17 @@ marginRight: 8,
 
 return (
 <KeyboardAvoidingView
-style={{ flex: 1, backgroundColor: '#fff' }}
-behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+style={{ flex: 1 }}
+behavior={Platform.OS === 'ios' ? 'padding' : undefined}
 keyboardVerticalOffset={headerHeight}
 >
-<View style={{ flex: 1, paddingHorizontal: 12, paddingTop: 12 }}>
+<View
+style={{
+flex: 1,
+padding: 12,
+paddingBottom: (insets.bottom || 12) + INPUT_BAR_H + 12,
+}}
+>
 {/* 搜尋 + 個人/設定 */}
 <View
 style={{
@@ -229,7 +235,7 @@ marginBottom: 8,
 <TextInput
 value={q}
 onChangeText={setQ}
-placeholderTextColor="#888"
+placeholderTextColor="#888" 
 placeholder="搜尋賽事名稱（可輸入多關鍵字）"
 style={{
 height: 36,
@@ -253,7 +259,7 @@ marginRight: 6,
 }}
 >
 <Text style={{ color: '#fff' }}>
-{myName ? `${myName}` : '個人'}
+{myName ? `個人：${myName}` : '個人'}
 </Text>
 </Pressable>
 <Pressable
@@ -272,56 +278,50 @@ borderRadius: 8,
     <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>
       賽事清單
     </Text>
+    <FlatList data={filtered} keyExtractor={(i) => i.id} renderItem={renderItem} />
+  </View>
 
-    {/* 清單（佔滿可捲動區域） */}
-    <FlatList
-      data={filtered}
-      keyExtractor={(i) => i.id}
-      renderItem={renderItem}
-      contentContainerStyle={{ paddingBottom: 12 }}
-    />
-
-    {/* 底部新增賽事列（非絕對定位，KeyboardAvoidingView 會推起） */}
-    <View
+  {/* 底部新增賽事 */}
+  <View
+    style={{
+      position: 'absolute',
+      left: 12,
+      right: 12,
+      bottom: (insets.bottom || 0) + 12,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      height: INPUT_BAR_H,
+    }}
+  >
+    <TextInput
+      value={name}
+      onChangeText={setName}
+      placeholder="新增賽事名稱"
+      placeholderTextColor="#888"
       style={{
-        marginTop: 8,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8,
+        flex: 1,
         height: INPUT_BAR_H,
-        paddingBottom: Math.max(0, insets.bottom),
+        borderWidth: 1,
+        borderColor: '#ccc',
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        backgroundColor: '#fff',
+      }}
+      returnKeyType="done"
+    />
+    <Pressable
+      onPress={add}
+      style={{
+        backgroundColor: '#1976d2',
+        paddingHorizontal: 16,
+        height: INPUT_BAR_H,
+        borderRadius: 8,
+        justifyContent: 'center',
       }}
     >
-      <TextInput
-        value={name}
-        onChangeText={setName}
-        placeholder="新增賽事名稱"
-        placeholderTextColor="#888"
-        style={{
-          flex: 1,
-          height: INPUT_BAR_H,
-          borderWidth: 1,
-          borderColor: '#ccc',
-          borderRadius: 8,
-          paddingHorizontal: 10,
-          backgroundColor: '#fff',
-        }}
-        returnKeyType="done"
-        onSubmitEditing={add}
-      />
-      <Pressable
-        onPress={add}
-        style={{
-          backgroundColor: '#1976d2',
-          paddingHorizontal: 16,
-          height: INPUT_BAR_H,
-          borderRadius: 8,
-          justifyContent: 'center',
-        }}
-      >
-        <Text style={{ color: '#fff' }}>新增</Text>
-      </Pressable>
-    </View>
+      <Text style={{ color: '#fff' }}>新增</Text>
+    </Pressable>
   </View>
 </KeyboardAvoidingView>
 );

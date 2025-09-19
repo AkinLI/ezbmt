@@ -226,7 +226,7 @@ export default function MatchesScreen() {
     return hasAny ? ` ${left}  VS  ${right}`  : null;
   };
 
-  // 搜尋（保留原機制；UI 從頂部移到浮動欄位）
+  // 搜尋
   const norm = (s: any) => String(s ?? '').toLowerCase().trim();
   const filtered = React.useMemo(() => {
     const kw = norm(q);
@@ -319,6 +319,9 @@ export default function MatchesScreen() {
           <Pressable onPress={() => navigation.navigate('MatchMembers', { matchId: item.id })} style={{ padding: 10, backgroundColor: '#3949ab', borderRadius: 8, marginRight: 6, marginBottom: 6 }}>
             <Text style={{ color: '#fff' }}>成員</Text>
           </Pressable>
+          <Pressable onPress={() => navigation.navigate('SpeedCam', { matchId: item.id })} style={{ padding: 10, backgroundColor: '#00695c', borderRadius: 8, marginRight: 6, marginBottom: 6 }}>
+            <Text style={{ color: '#fff' }}>測速</Text>
+          </Pressable>
           <Pressable onPress={() => onDeleteMatch(item)} style={{ padding: 10, backgroundColor: '#d32f2f', borderRadius: 8, marginRight: 6, marginBottom: 6 }}>
             <Text style={{ color: '#fff' }}>刪除</Text>
           </Pressable>
@@ -344,15 +347,16 @@ export default function MatchesScreen() {
 
   return (
     <View style={{ flex: 1, padding: 12 }}>
-      {/* 頂部工具列：回賽事 + 類型 + 場地 + 新增 */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
-        <Pressable
-          onPress={() => navigation.navigate('Events')}
-          style={{ paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#455a64', borderRadius: 8, marginRight: 8 }}
-        >
-          <Text style={{ color: '#fff' }}>回賽事</Text>
-        </Pressable>
-
+      {/* 搜尋列 + 新增 */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+        <TextInput
+          value={q}
+          onChangeText={setQ}
+          placeholder="搜尋類型/場地/球員（可多關鍵字）"
+          placeholderTextColor="#888" 
+          style={{ flex: 1, height: 40, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, paddingHorizontal: 10, marginRight: 8 }}
+          returnKeyType="search"
+        />
         <Pressable
           onPress={openTypePicker}
           style={{ paddingVertical: 8, paddingHorizontal: 12, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, marginRight: 8 }}
@@ -362,41 +366,14 @@ export default function MatchesScreen() {
         <TextInput
           value={court}
           onChangeText={setCourt}
-          placeholderTextColor="#888"
+          placeholderTextColor="#888" 
           placeholder="場地號 時間(可空)"
-          style={{ width: 170, height: 40, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, paddingHorizontal: 10, marginRight: 8 }}
+          style={{ width: 110, height: 40, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, paddingHorizontal: 10, marginRight: 8 }}
           returnKeyType="done"
         />
         <Pressable onPress={add} style={{ backgroundColor: '#1976d2', paddingHorizontal: 14, height: 40, borderRadius: 8, justifyContent: 'center' }}>
           <Text style={{ color: '#fff' }}>新增</Text>
         </Pressable>
-      </View>
-
-      {/* 浮動式篩選欄位（搜尋）－置於新增按鈕下方靠右 */}
-      <View style={{ alignItems: 'flex-end', marginBottom: 10 }}>
-        <View style={{
-          width: 260,
-          backgroundColor: '#fff',
-          borderRadius: 10,
-          paddingHorizontal: 10,
-          paddingVertical: 8,
-          borderWidth: 1,
-          borderColor: '#e0e0e0',
-          shadowColor: '#000',
-          shadowOpacity: 0.08,
-          shadowOffset: { width: 0, height: 4 },
-          shadowRadius: 10,
-          elevation: 2,
-        }}>
-          <TextInput
-            value={q}
-            onChangeText={setQ}
-            placeholderTextColor="#888"
-            placeholder="搜尋類型/場地/球員（可多關鍵字）"
-            style={{ height: 24 }}
-            returnKeyType="search"
-          />
-        </View>
       </View>
 
       <FlatList data={filtered} keyExtractor={(i) => i.id} renderItem={renderItem} />

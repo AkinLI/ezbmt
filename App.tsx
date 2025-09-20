@@ -36,6 +36,7 @@ new Set([
 'Record', // 記錄
 'SpeedCam', // 測速
 'Analysis', // 分析
+'Replay', // 回放
 ]),
 []
 );

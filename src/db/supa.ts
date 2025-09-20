@@ -2,6 +2,17 @@ import { supa, SUPABASE_URL } from '../lib/supabase';
 
 type MemberRole = 'owner'|'coach'|'recorder'|'player'|'viewer';
 
+export async function listInviteContacts(): Promise<Array<{ email:string; last_role: MemberRole; total_count:number; last_invited_at: string }>> {
+// RLS 已限制只回自己的資料，不需手動帶 owner_id
+const { data, error } = await supa
+.from('invite_contacts')
+.select('email,last_role,total_count,last_invited_at')
+.order('last_invited_at', { ascending: false })
+.limit(30);
+if (error) throw error;
+return (data || []) as any;
+}
+
 function toJsonString(v: any): string | null {
 try {
 if (v == null) return null;
@@ -230,8 +241,13 @@ return (data as MemberRole) || null;
 export async function listEventMembers(eventId: string) {
 const { data, error } = await supa.rpc('list_event_members_with_names', { p_event_id: eventId });
 if (error) throw error;
-// 直接是 { id,user_id,role,name }
-return (data || []) as Array<{ id:string; user_id:string; role:MemberRole; name:string }>;
+return (data || []) as Array<{
+id: string;
+user_id: string;
+role: 'owner'|'coach'|'recorder'|'player'|'viewer';
+name: string | null;
+email: string | null;
+}>;
 }
 
 /* 新增/變更角色（RPC） */
@@ -438,3 +454,10 @@ server?: { team:0|1; index:0|1; court:'R'|'L' };
 receiver?: { team:0|1; index:0|1; court:'R'|'L' };
 players?: Array<{ name?: string }>;
 };
+
+export async function importEventMembersToMatch(matchId: string): Promise<number> {
+if (!matchId) throw new Error('matchId is required');
+const { data, error } = await supa.rpc('upsert_match_members_from_event', { p_match_id: matchId });
+if (error) throw error;
+return (data as number) ?? 0;
+}

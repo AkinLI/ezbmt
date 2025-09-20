@@ -23,6 +23,8 @@ import { getCurrentUser, supa } from '../lib/supabase';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+type MemberRole = 'owner'|'coach'|'recorder'|'player'|'viewer' | null;
+
 export default function EventsScreen() {
 const nav = useNavigation<any>();
 const [items, setItems] = React.useState<Array<{ id: string; name: string }>>([]);
@@ -32,6 +34,12 @@ const [q, setQ] = React.useState(''); // 搜尋關鍵字
 
 // eventId => 是否有場次（true=有，因此不顯示刪除鈕）
 const [hasMap, setHasMap] = React.useState<Record<string, boolean>>({});
+
+// eventId => 我在該賽事的角色（owner/coach/…）
+const [roleMap, setRoleMap] = React.useState<Record<string, MemberRole>>({});
+
+// 最大管理者
+const [isAdmin, setIsAdmin] = React.useState<boolean>(false);
 
 const headerHeight = useHeaderHeight();
 const insets = useSafeAreaInsets();
@@ -103,6 +111,64 @@ cancelled = true;
 };
 }, [items]);
 
+// 批次查詢我在各賽事的角色（只在 supabase 模式下執行）
+React.useEffect(() => {
+if (BACKEND !== 'supabase') {
+setRoleMap({});
+return;
+}
+let cancelled = false;
+(async () => {
+try {
+if (!items.length) {
+if (!cancelled) setRoleMap({});
+return;
+}
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) {
+if (!cancelled) setRoleMap({});
+return;
+}
+const ids = items.map(i => i.id);
+const { data, error } = await supa
+.from('event_members')
+.select('event_id,role')
+.eq('user_id', uid)
+.in('event_id', ids as any);
+if (error) throw error;
+const map: Record<string, MemberRole> = {};
+(data || []).forEach((r: any) => {
+map[r.event_id] = (String(r.role) as MemberRole) || null;
+});
+if (!cancelled) setRoleMap(map);
+} catch {
+if (!cancelled) setRoleMap({});
+}
+})();
+return () => { cancelled = true; };
+}, [items]);
+
+// 取得是否為最大管理者（supabase 模式才檢查）
+useFocusEffect(
+React.useCallback(() => {
+let mounted = true;
+(async () => {
+if (BACKEND !== 'supabase') {
+if (mounted) setIsAdmin(false);
+return;
+}
+try {
+const { data, error } = await supa.rpc('is_app_admin');
+if (mounted) setIsAdmin(!error && !!data);
+} catch {
+if (mounted) setIsAdmin(false);
+}
+})();
+return () => { mounted = false; };
+}, [])
+);
+
 const add = async () => {
 const nm = name.trim();
 if (!nm) return;
@@ -162,33 +228,38 @@ return tokens.every((t) => hay.includes(t));
 
 const renderItem = ({ item }: { item: { id: string; name: string } }) => {
 const has = !!hasMap[item.id]; // true=有場次，不顯示刪除
+const myRole = roleMap[item.id] || null;
+const canSeeMembers = (myRole === 'owner' || myRole === 'coach');
+
 return (
-<View
-style={{
-padding: 12,
-borderWidth: 1,
-borderColor: '#eee',
-borderRadius: 8,
-marginBottom: 8,
-}}
->
-<Pressable onPress={() => nav.navigate('Matches', { eventId: item.id })}>
-<Text style={{ fontSize: 16 }}>{item.name}</Text>
-<Text style={{ color: '#666', marginTop: 4 }}>點擊進入場次管理</Text>
-</Pressable>
-<View style={{ flexDirection: 'row', marginTop: 8 }}>
-<Pressable
-onPress={() => nav.navigate('EventMembers', { eventId: item.id })}
-style={{
-paddingVertical: 6,
-paddingHorizontal: 10,
-backgroundColor: '#7b1fa2',
-borderRadius: 8,
-marginRight: 8,
-}}
->
-<Text style={{ color: '#fff' }}>成員</Text>
-</Pressable>
+  <View
+    style={{
+      padding: 12,
+      borderWidth: 1,
+      borderColor: '#eee',
+      borderRadius: 8,
+      marginBottom: 8,
+    }}
+  >
+    <Pressable onPress={() => nav.navigate('Matches', { eventId: item.id })}>
+      <Text style={{ fontSize: 16 }}>{item.name}</Text>
+      <Text style={{ color: '#666', marginTop: 4 }}>點擊進入場次管理</Text>
+    </Pressable>
+    <View style={{ flexDirection: 'row', marginTop: 8 }}>
+      {canSeeMembers && (
+        <Pressable
+          onPress={() => nav.navigate('EventMembers', { eventId: item.id })}
+          style={{
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+            backgroundColor: '#7b1fa2',
+            borderRadius: 8,
+            marginRight: 8,
+          }}
+        >
+          <Text style={{ color: '#fff' }}>成員</Text>
+        </Pressable>
+      )}
 
       {/* 沒有場次時才顯示刪除 */}
       {!has && (
@@ -256,24 +327,28 @@ marginRight: 6,
 {myName ? `${myName}` : '個人'}
 </Text>
 </Pressable>
-<Pressable
-onPress={() => nav.navigate('Settings')}
-style={{
-paddingVertical: 6,
-paddingHorizontal: 10,
-backgroundColor: '#455a64',
-borderRadius: 8,
-}}
->
-<Text style={{ color: '#fff' }}>設定</Text>
-</Pressable>
-</View>
+
+      {/* 設定：只有最大管理者可見 */}
+      {isAdmin && (
+        <Pressable
+          onPress={() => nav.navigate('Settings')}
+          style={{
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+            backgroundColor: '#455a64',
+            borderRadius: 8,
+          }}
+        >
+          <Text style={{ color: '#fff' }}>設定</Text>
+        </Pressable>
+      )}
+    </View>
 
     <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>
       賽事清單
     </Text>
 
-    {/* 清單（佔滿可捲動區域） */}
+    {/* 清單 */}
     <FlatList
       data={filtered}
       keyExtractor={(i) => i.id}
@@ -281,7 +356,7 @@ borderRadius: 8,
       contentContainerStyle={{ paddingBottom: 12 }}
     />
 
-    {/* 底部新增賽事列（非絕對定位，KeyboardAvoidingView 會推起） */}
+    {/* 底部新增賽事 */}
     <View
       style={{
         marginTop: 8,

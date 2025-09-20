@@ -17,6 +17,7 @@ export { enqueueSync, listSyncQueue, removeSyncItem, bumpSyncRetry } from './sql
 export const insertEvent = dao.insertEvent;
 export const listEvents = dao.listEvents;
 
+export const importEventMembersToMatch = (supaDao as any).importEventMembersToMatch;
 // 新增：檢查及刪除場次
 export const hasMatchRallies = (dao as any).hasMatchRallies;
 export const deleteMatch = (dao as any).deleteMatch;

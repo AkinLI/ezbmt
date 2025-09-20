@@ -1,4 +1,4 @@
-import React from 'react';
+import * as React from 'react';
 import { StatusBar, useColorScheme, Linking } from 'react-native';
 import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -7,6 +7,17 @@ import { startSyncLoop, stopSyncLoop } from './src/lib/sync';
 import GlobalBackground from './src/components/GlobalBackground';
 import { useBgStore } from './src/store/bg';
 import { supa } from './src/lib/supabase';
+
+export const AdminCtx = React.createContext<{ isAdmin: boolean }>({ isAdmin: false });
+
+async function fetchIsAdmin(): Promise<boolean> {
+try {
+const { data } = await supa.rpc('is_app_admin');
+return !!data;
+} catch {
+return false;
+}
+}
 
 export default function App() {
 const isDarkMode = useColorScheme() === 'dark';

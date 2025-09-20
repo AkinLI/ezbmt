@@ -910,7 +910,7 @@ function MetaPanel({
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '45%' }} onLayout={e => onMeasure?.(e.nativeEvent.layout.height)}>
+        <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '50%' }} onLayout={e => onMeasure?.(e.nativeEvent.layout.height)}>
           <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>{isWin ? '得分' : '失分'}選項</Text>
           <Group title="球種">
             <ChipList options={options.shotTypes} value={meta.shotType} onSelect={v => onChange({ ...meta, shotType: v === meta.shotType ? undefined : v })} />
@@ -937,7 +937,7 @@ function MetaPanel({
               </View>
             </Group>
           )}
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 12 }}>
+          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 2 }}>
             <Pressable onPress={onCancel} style={{ padding: 12, marginRight: 8 }}>
               <Text>取消</Text>
             </Pressable>

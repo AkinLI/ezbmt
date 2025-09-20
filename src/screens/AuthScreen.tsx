@@ -12,7 +12,7 @@ const [mode, setMode] = React.useState<'signin' | 'signup'>('signin');
 React.useEffect(() => {
 (async () => {
 const u = await getCurrentUser();
-if (u) navigation.replace('Events');
+if (u) navigation.replace('Home');
 })();
 }, [navigation]);
 
@@ -41,7 +41,7 @@ default: 'ezbmt://auth-callback',
     if (error) throw error;
     Alert.alert('已送出確認信', '請到信箱點擊驗證連結完成註冊');
   }
-  navigation.replace('Events');
+  navigation.replace('Home');
 } catch (e: any) {
   Alert.alert('失敗', String(e?.message || e));
 } finally {

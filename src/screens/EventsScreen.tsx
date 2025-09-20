@@ -313,35 +313,31 @@ backgroundColor: '#fff',
 returnKeyType="search"
 />
 </View>
-<Pressable
-onPress={() => nav.navigate('Profile')}
+
+        <Pressable
+          onPress={() => nav.navigate('Home')}
+          style={{
+            paddingVertical: 6,
+            paddingHorizontal: 10,
+            backgroundColor: '#1976d2',
+            borderRadius: 8,
+          }}
+        >
+          <Text style={{ color: '#fff' }}>回首頁</Text>
+        </Pressable>
+        <Pressable
 style={{
 paddingVertical: 6,
 paddingHorizontal: 10,
 backgroundColor: '#607d8b',
 borderRadius: 8,
-marginRight: 6,
+marginLeft:6,
 }}
 >
 <Text style={{ color: '#fff' }}>
-{myName ? `${myName}` : '個人'}
+{myName ? `Hi! ${myName}` : '個人'}
 </Text>
 </Pressable>
-
-      {/* 設定：只有最大管理者可見 */}
-      {isAdmin && (
-        <Pressable
-          onPress={() => nav.navigate('Settings')}
-          style={{
-            paddingVertical: 6,
-            paddingHorizontal: 10,
-            backgroundColor: '#455a64',
-            borderRadius: 8,
-          }}
-        >
-          <Text style={{ color: '#fff' }}>設定</Text>
-        </Pressable>
-      )}
     </View>
 
     <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>

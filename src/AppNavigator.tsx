@@ -17,6 +17,8 @@ import ProfileScreen from './screens/ProfileScreen';
 import EventMembersScreen from './screens/EventMembersScreen';
 import MatchMembersScreen from './screens/MatchMembersScreen';
 import SpeedCam from './screens/SpeedCamScreen';
+import HomeScreen from './screens/HomeScreen';
+import ClubHomeScreen from './screens/ClubHomeScreen';
 
 
 const Stack = createNativeStackNavigator();
@@ -37,6 +39,8 @@ screenOptions={{ headerBackTitle: '', ...headerDark }}
 {BACKEND === 'supabase' && (
 <Stack.Screen name="Auth" component={AuthScreen} options={{ title: '登入' }} />
 )}
+<Stack.Screen name="Home" component={HomeScreen} options={{ title: '首頁' }} />
+<Stack.Screen name="ClubHome" component={ClubHomeScreen} options={{ title: '社團管理' }} />
 <Stack.Screen name="JoinEvent" component={JoinEventScreen} options={{ title: '加入事件' }} />
 <Stack.Screen name="Profile" component={ProfileScreen} options={{ title: '個人' }} />
 <Stack.Screen name="EventMembers" component={EventMembersScreen} options={{ title: '事件成員' }} />

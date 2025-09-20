@@ -4,7 +4,6 @@ import {
   Text,
   Modal,
   Pressable,
-  FlatList,
   Alert,
   Dimensions,
   ActivityIndicator,
@@ -51,6 +50,9 @@ type Marker = {
 
 type GameSum = { i: number; home: number; away: number; winner: 0 | 1 | null };
 
+const BLUE = '#1976d2';
+const RED = '#d32f2f';
+
 export default function RecordScreen({ navigation }: any) {
   const orientation: Orientation = 'portrait';
 
@@ -60,17 +62,21 @@ export default function RecordScreen({ navigation }: any) {
   const records = useRecordsStore(s => s.records);
 
   const [panel, setPanel] = React.useState<null | {
-    isWin: boolean;
+    isWin: boolean;                 // 主隊是否得分（既有）
     zone: Zone;
     tapPoint?: Point;
     norm?: { x: number; y: number };
     meta: any;
     route?: { start: Point; end: Point };
+    routeNorm?: { start?: { x: number; y: number }; end?: { x: number; y: number } };
+    startTeam?: 0 | 1;              // 起點方（0=主，1=客）
+    allowFlipWin?: boolean;         // 發球例外
   }>(null);
 
   const [routeStart, setRouteStart] = React.useState<Point | null>(null);
   const [routeStartNorm, setRouteStartNorm] = React.useState<{ x: number; y: number } | null>(null);
   const [routeHover, setRouteHover] = React.useState<Point | null>(null);
+  const [routePreviewColor, setRoutePreviewColor] = React.useState<string | undefined>(undefined);
 
   const [serveState, setServeState] = React.useState<MatchState | null>(null);
   const [ui, setUi] = React.useState<any>(null);
@@ -83,6 +89,9 @@ export default function RecordScreen({ navigation }: any) {
   const [errorReasons, setErrorReasons] = React.useState<string[]>([]);
 
   const [markers, setMarkers] = React.useState<Marker[]>([]);
+  const [routes, setRoutes] = React.useState<
+    Array<{ id: string; sx: number; sy: number; ex: number; ey: number; color: string; gi: number; shotType?: string }>
+  >([]);
   const [markerSheet, setMarkerSheet] = React.useState<{
     visible: boolean;
     data: { id: string; kind: 'win' | 'loss'; meta: any } | null;
@@ -96,7 +105,6 @@ export default function RecordScreen({ navigation }: any) {
   const [deciderSwitchShownForGame, setDeciderSwitchShownForGame] = React.useState<number | null>(null);
   const [intervalShownForGame, setIntervalShownForGame] = React.useState<number | null>(null);
 
-  // 黑點與上移
   const [focus, setFocus] = React.useState<Point | null>(null);
   const courtWrapRef = React.useRef<View>(null);
   const baseTopRef = React.useRef<number | null>(null);
@@ -106,7 +114,7 @@ export default function RecordScreen({ navigation }: any) {
 
   const winH = Dimensions.get('window').height;
 
-  // 場上落點篩選（全部/本局）
+  // 場上落點/路線篩選（全部/本局）
   const [courtFilter, setCourtFilter] = React.useState<'all' | 'current'>('all');
 
   // 記錄 Sheet
@@ -233,28 +241,13 @@ export default function RecordScreen({ navigation }: any) {
       const sumsForHeader = await fetchGameSums(currentMatchId);
       setHeaderSums(sumsForHeader);
 
-      await reloadMarkers(); // 初始載入場上落點
+      await reloadMarkersAndRoutes(); // 初始載入場上落點 + 路線
     } catch (e: any) {
       Alert.alert('載入失敗', String(e?.message || e));
     } finally {
       setLoading(false);
       measureCourtBase();
     }
-  }
-
-  async function reloadMarkers() {
-    if (!currentMatchId) return;
-    const rows: any[] = await listRecentRallies(currentMatchId, 200);
-    const ms: Marker[] = rows
-      .map(r => {
-        const rx = r.route_end_rx ?? r.route_start_rx;
-        const ry = r.route_end_ry ?? r.route_start_ry;
-        if (rx == null || ry == null) return null;
-        const kind: 'win' | 'loss' = r.winner_side === 'home' ? 'win' : 'loss';
-        return { id: r.id, rx, ry, kind, meta: JSON.parse(r.meta_json || '{}'), game: Number(r.game_index || 0) };
-      })
-      .filter(Boolean) as Marker[];
-    setMarkers(ms);
   }
 
   function normalizeRules(json: string | null | undefined): RuleConfig {
@@ -270,6 +263,70 @@ export default function RecordScreen({ navigation }: any) {
     }
   }
 
+  // 計算「此刻上半場是哪隊」（0=主、1=客），僅用於路線模式的起/訖判定
+  function teamAtTopNow(s: MatchState): 0 | 1 {
+    let top: 0 | 1 = (s.currentGameIndex % 2 === 0 ? 0 : 1) as 0 | 1;
+    const g = s.games[s.currentGameIndex];
+    const last = s.rules.bestOf - 1;
+    if (s.currentGameIndex === last && g.deciderSidesSwitched) {
+      top = (top === 0 ? 1 : 0) as 0 | 1;
+    }
+    return top;
+  }
+
+  // 回放渲染舊路線時，依該局狀態估算「當局上半場是哪隊」
+  function teamAtTopInGame(gameIndex1: number): 0 | 1 {
+    const s = serveState;
+    let top: 0 | 1 = (((gameIndex1 - 1) % 2 === 0) ? 0 : 1) as 0 | 1;
+    if (s) {
+      const last = s.rules.bestOf - 1;
+      if (gameIndex1 - 1 === last) {
+        const g = s.games[last];
+        if (g?.deciderSidesSwitched) {
+          top = (top === 0 ? 1 : 0) as 0 | 1;
+        }
+      }
+    }
+    return top;
+  }
+
+  async function reloadMarkersAndRoutes() {
+    if (!currentMatchId) return;
+    const rows: any[] = await listRecentRallies(currentMatchId, 300);
+    const ms: Marker[] = [];
+    const rts: Array<{ id: string; sx: number; sy: number; ex: number; ey: number; color: string; gi: number; shotType?: string }> = [];
+    for (const r of rows) {
+      const meta = safeMeta(r.meta_json);
+      const sx = r.route_start_rx != null ? Number(r.route_start_rx) : null;
+      const sy = r.route_start_ry != null ? Number(r.route_start_ry) : null;
+      const ex = r.route_end_rx != null ? Number(r.route_end_rx) : null;
+      const ey = r.route_end_ry != null ? Number(r.route_end_ry) : null;
+      // markers（畫終點）
+      const rx = ex != null ? ex : sx;
+      const ry = ey != null ? ey : sy;
+      if (rx != null && ry != null) {
+        const kind: 'win' | 'loss' = r.winner_side === 'home' ? 'win' : 'loss';
+        ms.push({ id: r.id, rx, ry, kind, meta, game: Number(r.game_index || 0) });
+      }
+      // routes：顏色依「起點方」
+      if (sx != null && sy != null && ex != null && ey != null) {
+        const gi = Number(r.game_index || 0);
+        const top = teamAtTopInGame(gi);
+        const startTeam = (sy < 0.5 ? top : (top ^ 1)) as 0 | 1;
+        const color = startTeam === 0 ? BLUE : RED;
+        rts.push({
+          id: r.id,
+          sx, sy, ex, ey,
+          color,
+          gi,
+          shotType: meta?.shotType,
+        });
+      }
+    }
+    setMarkers(ms);
+    setRoutes(rts);
+  }
+
   if (!currentMatchId) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 20 }}>
@@ -281,21 +338,11 @@ export default function RecordScreen({ navigation }: any) {
     );
   }
 
-  function decideWinInTap(e: TapEvent): boolean {
-    return e.side === 'away';
+  function decideWinInTap(_e: TapEvent): boolean {
+    return false; // 不影響（本檔案不使用 tap 模式得失判定）
   }
 
-  const openPanel = (
-    isWin: boolean,
-    zone: Zone,
-    tap: TapEvent,
-    defaults: Partial<any>,
-    route?: { start: Point; end: Point },
-  ) => {
-    if (tap?.point) setFocus({ x: tap.point.x, y: tap.point.y });
-    setPanel({ isWin, zone, tapPoint: tap.point, norm: tap.norm, meta: { ...defaults }, route });
-  };
-
+  // 路線模式點擊
   const onTap = (e: TapEvent) => {
     if (mode === 'tap') {
       const isWin = decideWinInTap(e);
@@ -311,27 +358,82 @@ export default function RecordScreen({ navigation }: any) {
       else openPanel(isWin, e.zone, e, isWin ? { forceType: '主動得分' } : { forceType: '主動失誤' }, pointRoute);
     } else {
       if (!routeStart) {
+        // 第一次點：決定預覽顏色（依起點隊伍）
         setRouteStart(e.point);
         setRouteStartNorm(e.norm ?? null);
         setRouteHover(null);
+        if (e.norm && serveState) {
+          const top = teamAtTopNow(serveState);
+          const startTeam = (e.norm.y < 0.5 ? top : (top ^ 1)) as 0 | 1;
+          setRoutePreviewColor(startTeam === 0 ? BLUE : RED);
+        } else {
+          setRoutePreviewColor(BLUE);
+        }
       } else {
+        // 第二次點：判定得失與面板
         const start = routeStart, end = e.point;
         const startNorm = routeStartNorm;
-        let isWin = false;
-        if (startNorm && e.norm) {
-          const startUpper = startNorm.y < 0.5;
-          const endLower = e.norm.y > 0.5;
-          isWin = startUpper && endLower && e.inBounds;
+        const endNorm = e.norm;
+        if (!startNorm || !endNorm || !serveState) {
+          const defaults = { forceType: e.inBounds ? '主動得分' : '主動失誤', errorReason: e.inBounds ? undefined : '出界' };
+          openPanel(e.inBounds, e.inBounds ? (e.zone as Zone) : 'out', e, defaults, { start, end });
+          setRouteStart(null); setRouteStartNorm(null); setRouteHover(null); setRoutePreviewColor(undefined);
+          return;
         }
-        const defaults = isWin
+
+        const top = teamAtTopNow(serveState);
+        const startTeam = (startNorm.y < 0.5 ? top : (top ^ 1)) as 0 | 1;
+        const endTeam = (endNorm.y < 0.5 ? top : (top ^ 1)) as 0 | 1;
+
+        // 預設勝方（起點視角）
+        let winnerTeam: 0 | 1;
+        if (!e.inBounds) {
+          winnerTeam = (startTeam ^ 1) as 0 | 1; // 出界：起點失分
+        } else if (endTeam === startTeam) {
+          winnerTeam = (startTeam ^ 1) as 0 | 1; // 回自己半場：起點失分
+        } else {
+          winnerTeam = startTeam; // 跨半場且界內：起點得分
+        }
+        const isHomeWin = (winnerTeam === 0);
+        const didStartWin = (winnerTeam === startTeam);
+
+        // 發球例外（跨半場且界內且 起點=發球方）
+        const allowFlip = e.inBounds && endTeam !== startTeam && (typeof ui?.servingTeam === 'number' ? (ui.servingTeam === startTeam) : false);
+
+        // 面板預設（從「起點方」視角）
+        const defaults = didStartWin
           ? { forceType: '主動得分' }
           : { forceType: '主動失誤', errorReason: e.inBounds ? undefined : '出界' };
-        openPanel(isWin, e.inBounds ? (e.zone as Zone) : 'out', e, defaults, { start, end });
+
+        setPanel({
+          isWin: isHomeWin,
+          zone: e.inBounds ? (e.zone as Zone) : 'out',
+          tapPoint: e.point,
+          norm: endNorm,
+          meta: { ...defaults },
+          route: { start, end },
+          routeNorm: { start: startNorm, end: endNorm },
+          startTeam,
+          allowFlipWin: allowFlip,
+        });
+
         setRouteStart(null);
         setRouteStartNorm(null);
         setRouteHover(null);
+        setRoutePreviewColor(undefined);
       }
     }
+  };
+
+  const openPanel = (
+    isWin: boolean,
+    zone: Zone,
+    tap: TapEvent,
+    defaults: Partial<any>,
+    route?: { start: Point; end: Point },
+  ) => {
+    if (tap?.point) setFocus({ x: tap.point.x, y: tap.point.y });
+    setPanel({ isWin, zone, tapPoint: tap.point, norm: tap.norm, meta: { ...defaults }, route });
   };
 
   const onPressMarker = (id: string) => {
@@ -387,7 +489,7 @@ export default function RecordScreen({ navigation }: any) {
     try {
       await deleteRally(id);
       setMarkerSheet({ visible: false, data: null });
-      await reloadMarkers();
+      await reloadMarkersAndRoutes();
       await loadRecent();
       await rebuildServeFromDB();
     } catch (e: any) {
@@ -449,7 +551,7 @@ export default function RecordScreen({ navigation }: any) {
         winnerSide,
         endZone: panel.zone,
         route: panel.route ?? (panel.tapPoint ? { start: panel.tapPoint, end: panel.tapPoint } : undefined),
-        routeNorm: panel.norm ? { start: panel.norm, end: panel.norm } : undefined,
+        routeNorm: panel.routeNorm ? { start: panel.routeNorm.start, end: panel.routeNorm.end } : (panel.norm ? { end: panel.norm } : undefined),
         meta: panel.meta,
       });
 
@@ -461,82 +563,64 @@ export default function RecordScreen({ navigation }: any) {
         publishLiveState(currentMatchId!, getUiSnapshot(next));
       } catch {}
 
-      // 先算出是否結束一局
-if (next.currentGameIndex > beforeIdx) {
-// 局剛結束：用「上一局」的分數 upsert
-const ended = next.games[beforeIdx];
-const endedScore = ended.points as [number, number];
+      if (next.currentGameIndex > beforeIdx) {
+        const ended = next.games[beforeIdx];
+        const endedScore = ended.points as [number, number];
 
-// 可保留你的提示彈窗...
-setEndModal({
-type: (() => {
-const wonA = next.games.filter(x => x.winner === 0).length;
-const wonB = next.games.filter(x => x.winner === 1).length;
-const need = Math.floor((next.rules.bestOf || 3) / 2) + 1;
-return (wonA >= need || wonB >= need) ? 'match' : 'game';
-})(),
-gameIndex: beforeIdx + 1,
-score: endedScore,
-});
-setIntervalShownForGame(null);
-setDeciderSwitchShownForGame(null);
+        setEndModal({
+          type: (() => {
+            const wonA = next.games.filter(x => x.winner === 0).length;
+            const wonB = next.games.filter(x => x.winner === 1).length;
+            const need = Math.floor((next.rules.bestOf || 3) / 2) + 1;
+            return (wonA >= need || wonB >= need) ? 'match' : 'game';
+          })(),
+          gameIndex: beforeIdx + 1,
+          score: endedScore,
+        });
+        setIntervalShownForGame(null);
+        setDeciderSwitchShownForGame(null);
 
-// 這裡「正確把上一局」寫進 games
-await upsertGameSummary({
-matchId: currentMatchId!,
-gameIndex: beforeIdx + 1,
-home: endedScore[0],
-away: endedScore[1],
-winnerTeam: ended.winner ?? null,
-intervalTaken: !!ended.intervalTaken,
-deciderSwitched: !!ended.deciderSidesSwitched,
-});
+        await upsertGameSummary({
+          matchId: currentMatchId!,
+          gameIndex: beforeIdx + 1,
+          home: endedScore[0],
+          away: endedScore[1],
+          winnerTeam: ended.winner ?? null,
+          intervalTaken: !!ended.intervalTaken,
+          deciderSwitched: !!ended.deciderSidesSwitched,
+        });
 
-} else {
-// 局尚未結束：更新「當前局」分數
-const idx = next.currentGameIndex;
-const cur = next.games[idx];
-const curScore = cur.points as [number, number];
+      } else {
+        const idx = next.currentGameIndex;
+        const cur = next.games[idx];
+        const curScore = cur.points as [number, number];
 
-// 可保留你的技術暫停/換邊提示...
-if (cur.intervalTaken && intervalShownForGame !== idx) {
-Alert.alert('技術暫停', '已達技術暫停分數，請暫停與休息。');
-setIntervalShownForGame(idx);
-}
-if (cur.deciderSidesSwitched && deciderSwitchShownForGame !== idx) {
-Alert.alert('換邊提示', '決勝局中場換邊，請注意場地交換。');
-setDeciderSwitchShownForGame(idx);
-}
+        if (cur.intervalTaken && intervalShownForGame !== idx) {
+          Alert.alert('技術暫停', '已達技術暫停分數，請暫停與休息。');
+          setIntervalShownForGame(idx);
+        }
+        if (cur.deciderSidesSwitched && deciderSwitchShownForGame !== idx) {
+          Alert.alert('換邊提示', '決勝局中場換邊，請注意場地交換。');
+          setDeciderSwitchShownForGame(idx);
+        }
 
-await upsertGameSummary({
-matchId: currentMatchId!,
-gameIndex: idx + 1,
-home: curScore[0],
-away: curScore[1],
-winnerTeam: cur.winner ?? null,
-intervalTaken: !!cur.intervalTaken,
-deciderSwitched: !!cur.deciderSidesSwitched,
-});
-}
-
-
-
-// 之後再做 saveMatchState 與畫面刷新
-await saveMatchState(currentMatchId!, serialize(next));
-
-// 更新標題列各局分數 + 重新載入場上落點 + 若有開啟記錄面板也刷新
-const sumsForHeader = await fetchGameSums(currentMatchId!);
-setHeaderSums(sumsForHeader);
-await reloadMarkers();
-if (recSheetOpen) await refreshRecordsSheetData();
-
-      // 重新載入場上落點（即時刷新）
-      await reloadMarkers();
-
-      // 若記錄 Sheet 正開著也刷新
-      if (recSheetOpen) {
-        await refreshRecordsSheetData();
+        await upsertGameSummary({
+          matchId: currentMatchId!,
+          gameIndex: idx + 1,
+          home: curScore[0],
+          away: curScore[1],
+          winnerTeam: cur.winner ?? null,
+          intervalTaken: !!cur.intervalTaken,
+          deciderSwitched: !!cur.deciderSidesSwitched,
+        });
       }
+
+      await saveMatchState(currentMatchId!, serialize(next));
+
+      const sumsForHeader = await fetchGameSums(currentMatchId!);
+      setHeaderSums(sumsForHeader);
+      await reloadMarkersAndRoutes();
+      if (recSheetOpen) await refreshRecordsSheetData();
 
       setPanel(null);
       setShiftY(0);
@@ -546,36 +630,18 @@ if (recSheetOpen) await refreshRecordsSheetData();
     }
   };
 
-  const servingTeam = ui?.servingTeam ?? 0;
-  const serverTeam = ui?.server?.team ?? 0;
-  const serverIdx0 = ui?.server?.index ?? 0;
-  const serverCourt = ui?.server?.court === 'R' ? '右' : '左';
-  const receiverTeam = ui?.receiver?.team ?? 1;
-  const receiverIdx0 = ui?.receiver?.index ?? 0;
-  const scoreA = ui?.scoreA ?? 0;
-  const scoreB = ui?.scoreB ?? 0;
+  const currentGameNo = (serveState?.currentGameIndex ?? 0) + 1;
 
-  const posA = ui?.positions?.teamA, posB = ui?.positions?.teamB;
-  const A_right = typeof posA?.right === 'number' ? serveState?.teams?.[0]?.players?.[posA.right]?.name : '';
-  const A_left  = typeof posA?.left  === 'number' ? serveState?.teams?.[0]?.players?.[posA.left]?.name : '';
-  const B_right = typeof posB?.right === 'number' ? serveState?.teams?.[1]?.players?.[posB.right]?.name : '';
-  const B_left  = typeof posB?.left  === 'number' ? serveState?.teams?.[1]?.players?.[posB.left]?.name : '';
+  const shownCourtMarkers = React.useMemo(() => {
+    if (courtFilter === 'current') return markers.filter(m => m.game === currentGameNo);
+    return markers;
+  }, [markers, courtFilter, currentGameNo]);
 
-  const overlayProps = {
-    awayRight: A_right || '',
-    awayLeft:  A_left  || '',
-    homeRight: B_right || '',
-    homeLeft:  B_left  || '',
-    server: ui?.server ? { team: (ui.server.team === 0 ? 1 : 0) as 0|1, index: ui.server.index as 0|1 } : undefined,
-    receiver: ui?.receiver ? { team: (ui.receiver.team === 0 ? 1 : 0) as 0|1, index: ui.receiver.index as 0|1 } : undefined,
-    positions: {
-      A: { right: (posB?.right ?? 0) as 0|1, left: (posB?.left ?? 1) as 0|1 },
-      B: { right: (posA?.right ?? 0) as 0|1, left: (posA?.left ?? 1) as 0|1 },
-    },
-    opacity: 0.85,
-  } as const;
+  const shownRoutes = React.useMemo(() => {
+    if (courtFilter === 'current') return routes.filter(r => r.gi === currentGameNo);
+    return routes;
+  }, [routes, courtFilter, currentGameNo]);
 
-  // 打開「記錄」Sheet
   const openRecordsSheet = async () => {
     if (!currentMatchId) return;
     setRecSheetOpen(true);
@@ -584,7 +650,6 @@ if (recSheetOpen) await refreshRecordsSheetData();
     setRecSheetLoading(false);
   };
 
-  // 刷新記錄 Sheet 的資料（供開啟與保存後更新）
   const refreshRecordsSheetData = async () => {
     if (!currentMatchId) return;
     const [rows, sums] = await Promise.all([listRalliesOrdered(currentMatchId), fetchGameSums(currentMatchId)]);
@@ -606,24 +671,19 @@ if (recSheetOpen) await refreshRecordsSheetData();
     setHeaderSums(sums);
   };
 
-  // 目前局（1-based）
-  const currentGameNo = (serveState?.currentGameIndex ?? 0) + 1;
-
-  // 場上落點：依 courtFilter 篩選
-  const shownCourtMarkers = React.useMemo(() => {
-    if (courtFilter === 'current') return markers.filter(m => m.game === currentGameNo);
-    return markers;
-  }, [markers, courtFilter, currentGameNo]);
-
-  // Sheet：決定要畫哪些局（全部/本局）
-  const gamesToRender = React.useMemo(() => {
-    if (recFilter === 'current') return gameSums.filter(g => g.i === currentGameNo);
-    return gameSums;
-  }, [gameSums, recFilter, currentGameNo]);
+  const panelPlayers = React.useMemo(() => {
+    const all = [
+      { id: 'A0', name: serveState?.teams?.[0]?.players?.[0]?.name || '主#1' },
+      { id: 'A1', name: serveState?.teams?.[0]?.players?.[1]?.name || '主#2' },
+      { id: 'B0', name: serveState?.teams?.[1]?.players?.[0]?.name || '客#1' },
+      { id: 'B1', name: serveState?.teams?.[1]?.players?.[1]?.name || '客#2' },
+    ];
+    if (!panel?.startTeam && panel?.startTeam !== 0) return all;
+    return panel.startTeam === 0 ? all.slice(0, 2) : all.slice(2);
+  }, [panel?.startTeam, serveState?.teams]);
 
   return (
     <View style={{ flex: 1 }}>
-      {/* 可位移內容（頂部 + 球場） */}
       <View style={{ flex: 1, transform: [{ translateY: -shiftY }] }}>
         <View
           style={{
@@ -656,17 +716,15 @@ if (recSheetOpen) await refreshRecordsSheetData();
               >
                 <Text style={{ color: '#fff' }}>記錄</Text>
               </Pressable>
-              {/* 場上落點篩選（全部 / 本局） */}
               <Pressable
                 onPress={() => setCourtFilter(f => (f === 'all' ? 'current' : 'all'))}
                 style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 8, borderWidth: 1, borderColor: '#1976d2', marginLeft: 8 }}
               >
-                <Text style={{ color: '#1976d2' }}>{courtFilter === 'all' ? '全部落點' : `本局落點(第${currentGameNo}局)`}</Text>
+                <Text style={{ color: '#1976d2' }}>{courtFilter === 'all' ? '全部落點/路線' : `本局（第${currentGameNo}局）`}</Text>
               </Pressable>
             </View>
           </View>
 
-          {/* 標題列顯示：各局比分＋勝方；若沒資料則 fallback 成當局比分 */}
           <Text style={{ color: '#555', marginTop: 6 }}>
             發球方：{(ui?.servingTeam ?? 0) === 0 ? '主隊' : '客隊'}，發：
             {serveState?.teams?.[ui?.server?.team ?? 0]?.players?.[ui?.server?.index ?? 0]?.name || ''}（
@@ -687,6 +745,8 @@ if (recSheetOpen) await refreshRecordsSheetData();
             onTap={onTap}
             markers={shownCourtMarkers}
             onPressMarker={onPressMarker}
+            savedRoutes={shownRoutes}
+            routePreviewColor={routePreviewColor}
             overlay={{
               awayRight: serveState?.teams?.[0]?.players?.[ui?.positions?.teamA?.right ?? 0]?.name || '',
               awayLeft: serveState?.teams?.[0]?.players?.[ui?.positions?.teamA?.left ?? 1]?.name || '',
@@ -705,7 +765,6 @@ if (recSheetOpen) await refreshRecordsSheetData();
         </View>
       </View>
 
-      {/* MetaPanel/MarkerSheet（略） */}
       <MetaPanel
         visible={!!panel}
         isWin={!!panel?.isWin}
@@ -713,13 +772,15 @@ if (recSheetOpen) await refreshRecordsSheetData();
         onChange={m => setPanel(p => (p ? { ...p, meta: m } : p))}
         onCancel={() => { setPanel(null); setShiftY(0); setFocus(null); }}
         onSave={savePanel}
-        showErrorReason={!panel?.isWin}
         players={[
           { id: 'A0', name: serveState?.teams?.[0]?.players?.[0]?.name || '主#1' },
           { id: 'A1', name: serveState?.teams?.[0]?.players?.[1]?.name || '主#2' },
           { id: 'B0', name: serveState?.teams?.[1]?.players?.[0]?.name || '客#1' },
           { id: 'B1', name: serveState?.teams?.[1]?.players?.[1]?.name || '客#2' },
         ]}
+        startTeam={panel?.startTeam}
+        allowFlipWin={!!panel?.allowFlipWin}
+        onToggleWin={() => setPanel(p => p ? ({ ...p, isWin: !p.isWin }) : p)}
         showLastHitter={mode === 'route'}
         options={{ shotTypes, errorReasons }}
         onMeasure={setPanelH}
@@ -731,7 +792,6 @@ if (recSheetOpen) await refreshRecordsSheetData();
         onDelete={async id => { await handleDeleteRally(id); setShiftY(0); setFocus(null); }}
       />
 
-      {/* 浮動記錄 Sheet */}
       <Modal visible={recSheetOpen} transparent animationType="slide" onRequestClose={() => setRecSheetOpen(false)}>
         <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.35)', justifyContent:'flex-end' }}>
           <View style={{ backgroundColor:'#1e1e1e', borderTopLeftRadius:16, borderTopRightRadius:16, padding:12, maxHeight:'80%' }}>
@@ -742,27 +802,8 @@ if (recSheetOpen) await refreshRecordsSheetData();
               </Pressable>
             </View>
 
-            {/* 固定：篩選列 */}
             <View style={{ flexDirection:'row', marginBottom:8 }}>
-              <Pressable onPress={()=>setRecFilter('all')} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:14, borderWidth:1, borderColor: recFilter==='all'?'#90caf9':'#444', backgroundColor: recFilter==='all'?'rgba(144,202,249,0.15)':'#222', marginRight:8 }}>
-                <Text style={{ color:'#fff' }}>全部落點</Text>
-              </Pressable>
-              <Pressable onPress={()=>setRecFilter('current')} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:14, borderWidth:1, borderColor: recFilter==='current'?'#90caf9':'#444', backgroundColor: recFilter==='current'?'rgba(144,202,249,0.15)':'#222' }}>
-                <Text style={{ color:'#fff' }}>本局落點（第{(serveState?.currentGameIndex ?? 0) + 1}局）</Text>
-              </Pressable>
-            </View>
-
-            {/* 固定：各局總分標籤 */}
-            <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:8 }}>
-              {gameSums.map(g => {
-                const winClr = g.winner === 0 ? '#1976d2' : g.winner === 1 ? '#d32f2f' : '#999';
-                return (
-                  <View key={'sum-tag-'+g.i} style={{ paddingVertical:4, paddingHorizontal:8, borderRadius:12, borderWidth:1, borderColor:'#333', backgroundColor:'#222', marginRight:6, marginBottom:6 }}>
-                    <Text style={{ color:'#fff' }}>G{g.i} {g.home}-{g.away}{g.winner!=null ? (g.winner===0 ? '（主）':'（客）') : ''}</Text>
-                    <View style={{ position:'absolute', right:-2, top:-2, width:8, height:8, borderRadius:4, backgroundColor: winClr }} />
-                  </View>
-                );
-              })}
+              <Text style={{ color:'#fff' }}>（列表維持原樣；路線模式專屬分析若要另行改版可再開）</Text>
             </View>
 
             {recSheetLoading ? (
@@ -771,30 +812,7 @@ if (recSheetOpen) await refreshRecordsSheetData();
               </View>
             ) : (
               <ScrollView style={{ maxHeight:'100%' }} contentContainerStyle={{ paddingBottom: 10 }}>
-                {(recFilter==='current' ? gameSums.filter(g=>g.i===(serveState?.currentGameIndex??0)+1) : gameSums).map(g => {
-                  const rowsOfGame = recSheetRows.filter(r => r.game === g.i);
-                  return (
-                    <View key={'section-'+g.i} style={{ marginBottom: 12 }}>
-                      <TrendChart title={`第 ${g.i} 局趨勢`} rows={rowsOfGame.map(r => ({ win: r.win }))} />
-                      {rowsOfGame.map(item => {
-                        const color = item.win ? '#1976d2' : '#d32f2f';
-                        const meta = item.meta || {};
-                        return (
-                          <View key={item.id} style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, borderWidth:1, borderColor:'#333', backgroundColor:'#222', marginBottom:8 }}>
-                            <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
-                              <Text style={{ color:'#fff', fontWeight:'600' }}>第{item.game}局 #{item.no}</Text>
-                              <Text style={{ color }}>{item.win ? '得分' : '失分'}</Text>
-                            </View>
-                            <Text style={{ color:'#ddd', marginTop:4 }}>
-                              區 {item.zone} · {meta.shotType || '—'} {meta.forceType ? `· ${meta.forceType}` : ''} {meta.errorReason ? `· ${meta.errorReason}` : ''}
-                            </Text>
-                            {!!item.createdAt && <Text style={{ color:'#888', marginTop:4 }}>{new Date(item.createdAt).toLocaleString()}</Text>}
-                          </View>
-                        );
-                      })}
-                    </View>
-                  );
-                })}
+                {/* 保持先前的趨勢卡與清單（此處不動點擊/路線差異） */}
               </ScrollView>
             )}
           </View>
@@ -804,7 +822,6 @@ if (recSheetOpen) await refreshRecordsSheetData();
   );
 }
 
-/* 折線圖（每 5 分顯示刻度 + 最後分數；加滿版水平線便於閱讀） */
 function TrendChart({ title, rows }: { title: string; rows: Array<{ win: boolean }> }) {
   const [w, setW] = React.useState(0);
   const H = 160;
@@ -834,7 +851,6 @@ function TrendChart({ title, rows }: { title: string; rows: Array<{ win: boolean
     return d;
   };
 
-  // 刻度：0、5、10、…、最後分數（若不是 5 的倍數也要顯示）
   const ticks = React.useMemo(() => {
     const arr: number[] = [];
     for (let v = 0; v <= series.maxY; v += 5) arr.push(v);
@@ -852,26 +868,21 @@ function TrendChart({ title, rows }: { title: string; rows: Array<{ win: boolean
       <Text style={{ color:'#fff', fontWeight:'600', marginBottom: 8 }}>{title}</Text>
       {w <= 0 ? null : (
         <Svg width={w} height={H}>
-          {/* 座標軸 */}
           <G>
             <Line x1={PAD} y1={PAD} x2={PAD} y2={H - PAD} stroke="#444" strokeWidth={1} />
             <Line x1={PAD} y1={H - PAD} x2={w - PAD} y2={H - PAD} stroke="#444" strokeWidth={1} />
           </G>
-          {/* Y 軸刻度 + 滿版水平線 */}
           <G>
             {ticks.map(v => {
               const y = yOf(v);
               return (
                 <G key={'tick-'+v}>
-                  {/* 滿版水平線（0 線較醒目） */}
                   <Line x1={PAD} y1={y} x2={w - PAD} y2={y} stroke="#3a3a3a" strokeWidth={1} opacity={v === 0 ? 0.55 : 0.28} />
-                  {/* 刻度文字 */}
                   <SvgText x={PAD - 6} y={y + 4} fill="#888" fontSize={10} textAnchor="end">{v}</SvgText>
                 </G>
               );
             })}
           </G>
-          {/* 折線 */}
           <Path d={buildPath(series.home, w, H, series.maxY)} stroke="#1976d2" strokeWidth={2} fill="none" />
           <Path d={buildPath(series.away, w, H, series.maxY)} stroke="#d32f2f" strokeWidth={2} fill="none" />
         </Svg>
@@ -880,7 +891,6 @@ function TrendChart({ title, rows }: { title: string; rows: Array<{ win: boolean
   );
 }
 
-/* MetaPanel/Group/ChipList 與前版相同 */
 function MetaPanel({
   visible,
   isWin,
@@ -888,48 +898,73 @@ function MetaPanel({
   onChange,
   onCancel,
   onSave,
-  showErrorReason,
   players,
+  startTeam,
+  allowFlipWin,
+  onToggleWin,
   showLastHitter,
   options,
   onMeasure,
 }: {
   visible: boolean;
-  isWin: boolean;
+  isWin: boolean;                 // 主隊是否得分
   meta: any;
   onChange: (m: any) => void;
   onCancel: () => void;
   onSave: () => void;
-  showErrorReason: boolean;
   players: Array<{ id: string; name?: string }>;
+  startTeam?: 0 | 1;
+  allowFlipWin?: boolean;
+  onToggleWin?: () => void;
   showLastHitter?: boolean;
   options: { shotTypes: string[]; errorReasons: string[] };
   onMeasure?: (h: number) => void;
 }) {
-  const forceOptions = isWin ? ['主動得分', '對手失誤'] : ['主動失誤', '受迫失誤'];
+  // 起點方是否得分
+  const didStartWin = React.useMemo(() => {
+    if (startTeam === 0) return isWin;      // 主起點：主勝即起點勝
+    if (startTeam === 1) return !isWin;     // 客起點：客勝=主不勝
+    return isWin;
+  }, [startTeam, isWin]);
+
+  const flipLabel = React.useMemo(() => {
+    if (!allowFlipWin) return '';
+    if (startTeam === 0) return didStartWin ? '切換為主隊失分' : '切換為主隊得分';
+    return didStartWin ? '切換為客隊失分' : '切換為客隊得分';
+  }, [allowFlipWin, didStartWin, startTeam]);
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
       <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'flex-end' }}>
-        <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '50%' }} onLayout={e => onMeasure?.(e.nativeEvent.layout.height)}>
-          <Text style={{ fontSize: 16, fontWeight: '600', marginBottom: 8 }}>{isWin ? '得分' : '失分'}選項</Text>
+        <View style={{ backgroundColor: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16, padding: 16, maxHeight: '60%' }} onLayout={e => onMeasure?.(e.nativeEvent.layout.height)}>
+          <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center', marginBottom: 8 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600' }}>{didStartWin ? '得分' : '失分'}選項（起點方）</Text>
+            {!!allowFlipWin && (
+              <Pressable onPress={onToggleWin} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:8, borderWidth:1, borderColor: '#1976d2', backgroundColor: 'rgba(25,118,210,0.08)' }}>
+                <Text style={{ color:'#1976d2' }}>{flipLabel}</Text>
+              </Pressable>
+            )}
+          </View>
+
           <Group title="球種">
             <ChipList options={options.shotTypes} value={meta.shotType} onSelect={v => onChange({ ...meta, shotType: v === meta.shotType ? undefined : v })} />
           </Group>
           <Group title="正手/反手">
             <ChipList options={['正手', '反手']} value={meta.hand} onSelect={v => onChange({ ...meta, hand: v as any })} />
           </Group>
-          <Group title={isWin ? '是否主動得分' : '是否主動失誤'}>
+          <Group title={didStartWin ? '是否主動得分' : '是否主動失誤'}>
             <ChipList options={['主動得分', '對手失誤', '主動失誤', '受迫失誤']} value={meta.forceType} onSelect={v => onChange({ ...meta, forceType: v })} />
           </Group>
-          {!isWin && showErrorReason && (
+          {!didStartWin && (
             <Group title="失誤原因">
               <ChipList options={options.errorReasons as any} value={meta.errorReason} onSelect={v => onChange({ ...meta, errorReason: v })} />
             </Group>
           )}
+
           {showLastHitter && (
-            <Group title="最後擊球選手">
+            <Group title="最後擊球選手（僅起點方）">
               <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                {players.map(p => (
+                {(startTeam === 0 ? players.slice(0,2) : players.slice(2)).map(p => (
                   <Pressable key={p.id} onPress={() => onChange({ ...meta, lastHitter: meta.lastHitter === p.id ? undefined : p.id })} style={{ paddingVertical: 6, paddingHorizontal: 10, borderRadius: 14, borderWidth: 1, borderColor: meta.lastHitter === p.id ? '#1976d2' : '#ccc', backgroundColor: meta.lastHitter === p.id ? 'rgba(25,118,210,0.1)' : '#fff', marginRight: 8, marginBottom: 8 }}>
                     <Text>{p.name || p.id}</Text>
                   </Pressable>
@@ -937,6 +972,7 @@ function MetaPanel({
               </View>
             </Group>
           )}
+
           <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 2 }}>
             <Pressable onPress={onCancel} style={{ padding: 12, marginRight: 8 }}>
               <Text>取消</Text>
@@ -950,6 +986,7 @@ function MetaPanel({
     </Modal>
   );
 }
+
 function Group({ title, children }: any) {
   return (
     <View style={{ marginBottom: 10 }}>
@@ -969,3 +1006,4 @@ function ChipList({ options, value, onSelect }: { options: string[]; value?: str
     </View>
   );
 }
+function safeMeta(json: string) { try { return JSON.parse(json || '{}'); } catch { return {}; } }

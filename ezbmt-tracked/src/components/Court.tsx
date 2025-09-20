@@ -1,6 +1,7 @@
+
 import React, { useMemo, useState, useCallback } from 'react';
 import { View, LayoutChangeEvent } from 'react-native';
-import Svg, { Rect, Line, Text as SvgText, G, Circle } from 'react-native-svg';
+import Svg, { Rect, Line, Text as SvgText, G, Circle, Path } from 'react-native-svg';
 import type { Orientation, Side, Zone, TapEvent, Point } from '../types';
 
 type Marker = {
@@ -15,6 +16,17 @@ type OverlayPositions = {
   B: { right: 0 | 1; left: 0 | 1 };
 };
 
+type SavedRoute = {
+  id: string;
+  sx: number; // normalized (0..1)
+  sy: number;
+  ex: number;
+  ey: number;
+  color: string; // 起點主=藍、起點客=紅（半透明）
+  gi?: number;  // game index
+  shotType?: string; // 曲率參考
+};
+
 type Props = {
   orientation: Orientation;
   singles: boolean;
@@ -26,7 +38,6 @@ type Props = {
   markers?: Marker[];
   onPressMarker?: (id: string) => void;
 
-  // 站位疊加
   overlay?: {
     homeRight?: string;
     homeLeft?: string;
@@ -38,24 +49,23 @@ type Props = {
     opacity?: number;
   };
 
-  // 新增：父層控制的黑點（以 Court 內部座標 px）
+  savedRoutes?: SavedRoute[];
+  routePreviewColor?: string; // 預覽色（依起點隊）
   focusPoint?: { x: number; y: number } | null;
 };
 
-/* 球場比例 */
+/* 球場比例與尺寸常數 */
 const FULL_LEN = 13.4;
 const FULL_WID = 6.1;
 const PORTRAIT_RATIO = FULL_WID / FULL_LEN;
 const LANDSCAPE_RATIO = FULL_LEN / FULL_WID;
-
-/* 實際尺寸 */
 const SHORT_LINE_DIST = 1.98;
 const DBL_LONG_BACK = 0.76;
 const SNG_WID = 5.18;
 const SIDE_GAP = (FULL_WID - SNG_WID) / 2;
 
 export default function Court({
-  orientation, singles, mode, routeStart, routeHover, onTap, onHover, markers = [], onPressMarker, overlay, focusPoint,
+  orientation, singles, mode, routeStart, routeHover, onTap, onHover, markers = [], onPressMarker, overlay, focusPoint, savedRoutes = [], routePreviewColor,
 }: Props) {
   const [box, setBox] = useState({ w: 0, h: 0 });
   const onLayout = useCallback((e: LayoutChangeEvent) => {
@@ -103,6 +113,8 @@ export default function Court({
           onPressMarker={onPressMarker}
           overlay={overlay}
           focusPoint={focusPoint}
+          savedRoutes={savedRoutes}
+          routePreviewColor={routePreviewColor}
         />
       )}
     </View>
@@ -111,7 +123,7 @@ export default function Court({
 
 function CourtSurface({
   containerW, containerH, width, height, padX, padY, offsetX, offsetY,
-  orientation, singles, mode, routeStart, routeHover, onTap, onHover, markers, onPressMarker, overlay, focusPoint,
+  orientation, singles, mode, routeStart, routeHover, onTap, onHover, markers, onPressMarker, overlay, focusPoint, savedRoutes = [], routePreviewColor,
 }: {
   containerW: number; containerH: number; width: number; height: number; padX: number; padY: number; offsetX: number; offsetY: number;
 } & Props) {
@@ -290,33 +302,39 @@ function CourtSurface({
     });
   }
 
-  function textW(txt: string, fs: number) {
-    const n = (txt || '').length;
-    return Math.max(24, Math.round(n * fs * 0.58));
+  // 已保存路線（近似羽球飛行）
+  function renderSavedRoutes() {
+    if (!savedRoutes || savedRoutes.length === 0) return null;
+
+    return savedRoutes.map(r => {
+      const sxPx = innerX + r.sx * innerW;
+      const syPx = innerY + r.sy * innerH;
+      const exPx = innerX + r.ex * innerW;
+      const eyPx = innerY + r.ey * innerH;
+
+      const dx = exPx - sxPx;
+      const dy = eyPx - syPx;
+      const len = Math.max(1, Math.hypot(dx, dy));
+
+      // 單位法向（朝上側），控制點落在 60~70% 處，弧度依球種
+      const nx = -dy / len;
+      const ny = dx / len;
+
+      const shot = (r.shotType || '').trim();
+      let k = 0.12 * len; // 中等弧度
+      let t = 0.6;
+      if (shot.includes('殺')) { k = 0.05 * len; t = 0.55; }
+      else if (shot.includes('高遠')) { k = 0.24 * len; t = 0.7; }
+
+      const cx = sxPx + dx * t + nx * k;
+      const cy = syPx + dy * t + ny * k;
+
+      const d = `M ${sxPx} ${syPx} Q ${cx} ${cy} ${exPx} ${eyPx}`;
+      return <Path key={r.id} d={d} stroke={r.color} strokeWidth={Math.max(3, Math.round(Math.min(innerW, innerH) * 0.008))} fill="none" opacity={0.65} />;
+    });
   }
-  function NameBadge({ x, y, label, fs, mark }: { x: number; y: number; label: string; fs: number; mark?: 'S' | 'R' }) {
-    const padX = 10, padY = 6;
-    const w = textW(label, fs) + padX * 2;
-    const h = fs + padY * 2;
-    const rx = 10;
-    const bg = 'rgba(0,0,0,0.35)';
-    return (
-      <G>
-        <Rect x={x - w / 2} y={y - h / 2} width={w} height={h} rx={rx} ry={rx} fill={bg} />
-        <SvgText x={x} y={y} fontSize={fs} fill="#fff" textAnchor="middle" alignmentBaseline="middle">
-          {label || ''}
-        </SvgText>
-        {mark ? (
-          <G>
-            <Circle cx={x + w / 2 - 12} cy={y - h / 2 + 12} r={10} fill={mark === 'S' ? '#1976d2' : '#d32f2f'} />
-            <SvgText x={x + w / 2 - 12} y={y - h / 2 + 12} fontSize={10} fill="#fff" textAnchor="middle" alignmentBaseline="middle">
-              {mark}
-            </SvgText>
-          </G>
-        ) : null}
-      </G>
-    );
-  }
+
+  const previewColor = routePreviewColor || '#1976d2';
 
   return (
     <View style={{ width: containerW, height: containerH, marginLeft: offsetX, marginTop: offsetY }}>
@@ -325,15 +343,21 @@ function CourtSurface({
           {RealCourt()}
           {renderZonesPortrait('away')}
           {renderZonesPortrait('home')}
+
+          {/* 路線（已保存） */}
+          {renderSavedRoutes()}
+
+          {/* 落點 */}
           {renderMarkers()}
 
+          {/* 路線預覽（依起點隊伍顏色） */}
           {routeStart && (
             <>
-              <Circle cx={routeStart.x} cy={routeStart.y} r={12} fill="#1976d2" />
+              <Circle cx={routeStart.x} cy={routeStart.y} r={12} fill={previewColor} />
               {routeHover && (
                 <>
-                  <Line x1={routeStart.x} y1={routeStart.y} x2={routeHover.x} y2={routeHover.y} stroke="#1976d2" strokeWidth={6} strokeDasharray="12,8" opacity={0.85} />
-                  <Circle cx={routeHover.x} cy={routeHover.y} r={10} fill="#1976d2" opacity={0.9} />
+                  <Line x1={routeStart.x} y1={routeStart.y} x2={routeHover.x} y2={routeHover.y} stroke={previewColor} strokeWidth={6} strokeDasharray="12,8" opacity={0.85} />
+                  <Circle cx={routeHover.x} cy={routeHover.y} r={10} fill={previewColor} opacity={0.9} />
                 </>
               )}
             </>
@@ -371,7 +395,7 @@ function CourtSurface({
             );
           })()}
 
-          {/* 受控黑點（直到父層清除） */}
+          {/* 受控黑點 */}
           {focusPoint ? <Circle cx={focusPoint.x} cy={focusPoint.y} r={10} fill="rgba(0,0,0,0.85)" /> : null}
         </G>
       </Svg>
@@ -384,5 +408,29 @@ function CourtSurface({
         onResponderRelease={onResponderRelease}
       />
     </View>
+  );
+}
+
+function NameBadge({ x, y, label, fs, mark }: { x: number; y: number; label: string; fs: number; mark?: 'S' | 'R' }) {
+  const padX = 10, padY = 6;
+  const w = Math.max(24, Math.round((label || '').length * fs * 0.58)) + padX * 2;
+  const h = fs + padY * 2;
+  const rx = 10;
+  const bg = 'rgba(0,0,0,0.35)';
+  return (
+    <G>
+      <Rect x={x - w / 2} y={y - h / 2} width={w} height={h} rx={rx} ry={rx} fill={bg} />
+      <SvgText x={x} y={y} fontSize={fs} fill="#fff" textAnchor="middle" alignmentBaseline="middle">
+        {label || ''}
+      </SvgText>
+      {mark ? (
+        <G>
+          <Circle cx={x + w / 2 - 12} cy={y - h / 2 + 12} r={10} fill={mark === 'S' ? '#1976d2' : '#d32f2f'} />
+          <SvgText x={x + w / 2 - 12} y={y - h / 2 + 12} fontSize={10} fill="#fff" textAnchor="middle" alignmentBaseline="middle">
+            {mark}
+          </SvgText>
+        </G>
+      ) : null}
+    </G>
   );
 }

@@ -79,7 +79,7 @@ LBF能力有限羽球分析平台ezbmt
 
     <View style={{ maxWidth: 480, alignSelf: 'center', width: '100%' }}>
       <Button title="賽事管理" color={C.primary} onPress={() => navigation.navigate('Events')} />
-      <Button title="社團管理" color={C.accent} onPress={() => navigation.navigate('ClubHome')} />
+      <Button title="社團管理" color={C.accent} onPress={() => navigation.navigate('Clubs')} />
       <Button title="個人設定" color={C.gray} onPress={() => navigation.navigate('Profile')} />
 
       {/* 僅最大管理者顯示「測速」 */}

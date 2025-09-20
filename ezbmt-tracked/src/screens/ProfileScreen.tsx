@@ -177,9 +177,6 @@ return (
   <Pressable onPress={()=>navigation.goBack()} style={{ backgroundColor:'#9e9e9e', paddingVertical:10, borderRadius:8, alignItems:'center', marginTop:24 }}>
     <Text style={{ color:'#fff' }}>取消</Text>
   </Pressable>
-  <Pressable onPress={async()=>{ await supa.auth.signOut(); navigation.replace('Auth'); }} style={{ backgroundColor:'#d32f2f', paddingVertical:10, borderRadius:8, alignItems:'center', marginTop:12 }}>
-    <Text style={{ color:'#fff' }}>登出</Text>
-  </Pressable>
 </ScrollView>
 );
 }

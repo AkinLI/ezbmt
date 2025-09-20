@@ -79,6 +79,47 @@ export const listSpeedSessions = (sqliteDao as any).listSpeedSessions;
 export const getSpeedSessionPoints = (sqliteDao as any).getSpeedSessionPoints;
 export const deleteSpeedSession = (sqliteDao as any).deleteSpeedSession;
 
+// Clubs
+export const listClubs = (supaDao as any).listClubs;
+export const createClub = (supaDao as any).createClub;
+export const getMyClubRoles = (supaDao as any).getMyClubRoles;
+
+// Buddies
+export const listBuddies = (supaDao as any).listBuddies;
+export const upsertBuddy = (supaDao as any).upsertBuddy;
+export const deleteBuddy = (supaDao as any).deleteBuddy;
+
+// Sessions
+export const listSessions = (supaDao as any).listSessions;
+export const createSession = (supaDao as any).createSession;
+
+// Session Attendees
+export const listSessionAttendees = (supaDao as any).listSessionAttendees;
+export const upsertSessionAttendee = (supaDao as any).upsertSessionAttendee;
+export const removeSessionAttendee = (supaDao as any).removeSessionAttendee;
+
+// Rounds / Courts
+export const listRounds = (supaDao as any).listRounds;
+export const createRound = (supaDao as any).createRound;
+export const listRoundCourts = (supaDao as any).listRoundCourts;
+export const upsertRoundCourts = (supaDao as any).upsertRoundCourts;
+export const getRoundCourtTeams = (supaDao as any).getRoundCourtTeams;
+
+// Scoreboard
+export const getRoundResultState = (supaDao as any).getRoundResultState;
+export const upsertRoundResultState = (supaDao as any).upsertRoundResultState;
+
+// Club roles
+export const getMyClubRole = (supaDao as any).getMyClubRole;
+
+// Club chats
+export const listClubChatMessages = (supaDao as any).listClubChatMessages;
+export const insertClubChatMessage = (supaDao as any).insertClubChatMessage;
+
+// Club media
+export const listClubMedia = (supaDao as any).listClubMedia;
+export const insertClubMedia = (supaDao as any).insertClubMedia;
+
 
 export async function listMyEvents() {
 if (BACKEND === 'supabase' && (supaDao as any).listMyEvents) {
@@ -108,3 +149,13 @@ const id = Math.random().toString(36).slice(2);
 await sqliteDao.insertMatch({ id, event_id: args.event_id, type: args.type, court_no: args.courtNo ?? undefined });
 return id;
 }
+
+
+export {
+insertSession,
+listSessionsOfMe,
+upsertAttendee,
+removeAttendee,
+upsertRound,
+listProjection,
+} from './supa_club';

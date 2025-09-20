@@ -10,10 +10,10 @@ import { View, Text, Pressable } from 'react-native';
 import Svg, { Rect, Line, Circle } from 'react-native-svg';
 
 export type RouteItem = {
-sx: number; sy: number;
-ex: number; ey: number;
+sx: number; sy: number;     // normalized start (可為 <0 或 >1：出界)
+ex: number; ey: number;     // normalized end   (可為 <0 或 >1：出界)
 kind: 'win' | 'loss';
-color?: string; // 新增：可由外部指定線色（主=藍、客=紅）
+color?: string;             // 可由外部指定線色（主=藍、客=紅）
 meta?: { shotType?: string; forceType?: string; errorReason?: string };
 };
 
@@ -24,8 +24,8 @@ toggle: () => void;
 prev: () => void;
 next: () => void;
 replay: () => void;
-restartAll: () => void;     // 新增：全部重播（從第一球開始播放）
-setSpeed: (s: 0.5 | 1 | 2) => void; // 新增：外部調速
+restartAll: () => void;           // 全部重播（從第一球）
+setSpeed: (s: 0.5 | 1 | 2) => void;
 };
 
 type Props = {
@@ -41,14 +41,22 @@ controls?: 'full' | 'none';       // 預設 'none'：不畫內建控制列
 showFilterChips?: boolean;        // controls='full' 時才有意義
 };
 
+// 球場實際規格（直式）
 const FULL_LEN = 13.4;
 const FULL_WID = 6.1;
 const SHORT_LINE_DIST = 1.98;
 const DBL_LONG_BACK = 0.76;
 
+// 為「界外」預留的可視邊界（比例以整張畫布計算）
+// 例如 0.15 代表左右/上下各留 15% 空間，用來容納 rx/ry < 0 或 > 1 的落點
+const OUT_PAD_X = 0.1;
+const OUT_PAD_Y = 0.02;
+
 const RoutePlayer = forwardRef<RoutePlayerHandle, Props>(function RoutePlayer(
 {
-width, height, routes,
+width,
+height,
+routes,
 autoPlay = true,
 initialSpeed = 1,
 filter = 'all',
@@ -67,6 +75,15 @@ const [speed, setSpeed] = useState<0.5 | 1 | 2>(initialSpeed);
 const rafRef = useRef<number | null>(null);
 const lastTsRef = useRef<number | null>(null);
 
+// 預先計算「球場本體」繪製區（inner）與映射函式（mapX/mapY）
+const padX = Math.round(width * OUT_PAD_X);
+const padY = Math.round(height * OUT_PAD_Y);
+const innerW = Math.max(1, width - padX * 2);
+const innerH = Math.max(1, height - padY * 2);
+
+const mapX = (rx: number) => padX + rx * innerW;
+const mapY = (ry: number) => padY + ry * innerH;
+
 const filtered = useMemo(() => {
 if (filter === 'all') return routes;
 if (filter === 'win') return routes.filter(r => r.kind === 'win');
@@ -82,7 +99,6 @@ return arr;
 return routes;
 }, [routes, filter]);
 
-// 初始化/變更來源時歸零
 useEffect(() => { setIndex(0); setT(0); setPlaying(autoPlay); }, [filter, routes, autoPlay]);
 useEffect(() => { onIndexChange?.(index); }, [index, onIndexChange]);
 useEffect(() => { onPlayingChange?.(playing); }, [playing, onPlayingChange]);
@@ -135,50 +151,63 @@ ref,
 [total]
 );
 
-const dotR = Math.max(4, Math.round(Math.min(width, height) * 0.01));
-const trackW = Math.max(3, Math.round(Math.min(width, height) * 0.008));
+// 點大小與線寬依 inner 區域尺度計算（避免含 padding 時視覺過小）
+const sizeBase = Math.min(innerW, innerH);
+const dotR = Math.max(4, Math.round(sizeBase * 0.01));
+const trackW = Math.max(3, Math.round(sizeBase * 0.008));
 
-const sx = cur ? cur.sx * width : 0;
-const sy = cur ? cur.sy * height : 0;
-const ex = cur ? cur.ex * width : 0;
-const ey = cur ? cur.ey * height : 0;
+// 位置映射（把 normalized *inner + padding）
+const sx = cur ? mapX(cur.sx) : 0;
+const sy = cur ? mapY(cur.sy) : 0;
+const ex = cur ? mapX(cur.ex) : 0;
+const ey = cur ? mapY(cur.ey) : 0;
 const cx = sx + (ex - sx) * t;
 const cy = sy + (ey - sy) * t;
 
-// 使用外部傳入 color（路線模式：主=藍、客=紅）；若無則依得/失分 fallback
+// 路徑顏色（優先用外部 color；否則依得/失）
 const color = cur?.color || (cur?.kind === 'win' ? '#1976d2' : '#d32f2f');
 
+// 以 inner 繪製球場（綠底與線）
 function CourtLines() {
-const innerW = width, innerH = height;
-const midY = innerH / 2;
-const midX = innerW / 2;
+const midY = padY + innerH / 2;
+const midX = padX + innerW / 2;
 const syScale = innerH / FULL_LEN;
 const sxScale = innerW / FULL_WID;
 const topShort = midY - SHORT_LINE_DIST * syScale;
 const bottomShort = midY + SHORT_LINE_DIST * syScale;
-const topDblLong = 0 + DBL_LONG_BACK * syScale;
-const bottomDblLong = innerH - DBL_LONG_BACK * syScale;
-const singleLeft = (innerW - (5.18 * sxScale)) / 2;
-const singleRight = innerW - singleLeft;
+const topDblLong = padY + 0 + DBL_LONG_BACK * syScale;
+const bottomDblLong = padY + innerH - DBL_LONG_BACK * syScale;
+const singleInnerW = 5.18 * sxScale;
+const singleLeft = padX + (innerW - singleInnerW) / 2;
+const singleRight = padX + innerW - (innerW - singleInnerW) / 2;
 const line = '#f0e6da';
 const lineW = Math.max(2, Math.round(Math.min(innerW, innerH) * 0.012));
 
 return (
   <>
-    <Rect x={0} y={0} width={innerW} height={innerH} fill="#2e7d32" />
-    <Line x1={0} y1={0} x2={innerW} y2={0} stroke={line} strokeWidth={lineW} />
-    <Line x1={0} y1={innerH} x2={innerW} y2={innerH} stroke={line} strokeWidth={lineW} />
-    <Line x1={0} y1={0} x2={0} y2={innerH} stroke={line} strokeWidth={lineW} />
-    <Line x1={innerW} y1={0} x2={innerW} y2={innerH} stroke={line} strokeWidth={lineW} />
-    <Line x1={singleLeft} y1={0} x2={singleLeft} y2={innerH} stroke={line} strokeWidth={lineW} />
-    <Line x1={singleRight} y1={0} x2={singleRight} y2={innerH} stroke={line} strokeWidth={lineW} />
-    <Line x1={0} y1={midY} x2={innerW} y2={midY} stroke={line} strokeWidth={lineW} />
-    <Line x1={0} y1={topShort} x2={innerW} y2={topShort} stroke={line} strokeWidth={lineW} />
-    <Line x1={0} y1={bottomShort} x2={innerW} y2={bottomShort} stroke={line} strokeWidth={lineW} />
-    <Line x1={midX} y1={topShort} x2={midX} y2={0} stroke={line} strokeWidth={lineW} />
-    <Line x1={midX} y1={bottomShort} x2={midX} y2={innerH} stroke={line} strokeWidth={lineW} />
-    <Line x1={0} y1={topDblLong} x2={innerW} y2={topDblLong} stroke={line} strokeWidth={lineW} />
-    <Line x1={0} y1={bottomDblLong} x2={innerW} y2={bottomDblLong} stroke={line} strokeWidth={lineW} />
+    {/* 背景透明層 */}
+    <Rect x={0} y={0} width={width} height={height} fill="transparent" />
+    {/* 球場本體（綠底） */}
+    <Rect x={padX} y={padY} width={innerW} height={innerH} fill="#2e7d32" />
+    {/* 外框 */}
+    <Line x1={padX} y1={padY} x2={padX + innerW} y2={padY} stroke={line} strokeWidth={lineW} />
+    <Line x1={padX} y1={padY + innerH} x2={padX + innerW} y2={padY + innerH} stroke={line} strokeWidth={lineW} />
+    <Line x1={padX} y1={padY} x2={padX} y2={padY + innerH} stroke={line} strokeWidth={lineW} />
+    <Line x1={padX + innerW} y1={padY} x2={padX + innerW} y2={padY + innerH} stroke={line} strokeWidth={lineW} />
+    {/* 單打邊線 */}
+    <Line x1={singleLeft} y1={padY} x2={singleLeft} y2={padY + innerH} stroke={line} strokeWidth={lineW} />
+    <Line x1={singleRight} y1={padY} x2={singleRight} y2={padY + innerH} stroke={line} strokeWidth={lineW} />
+    {/* 網 */}
+    <Line x1={padX} y1={midY} x2={padX + innerW} y2={midY} stroke={line} strokeWidth={lineW} />
+    {/* 短發球線 */}
+    <Line x1={padX} y1={topShort} x2={padX + innerW} y2={topShort} stroke={line} strokeWidth={lineW} />
+    <Line x1={padX} y1={bottomShort} x2={padX + innerW} y2={bottomShort} stroke={line} strokeWidth={lineW} />
+    {/* 中央分界線 */}
+    <Line x1={midX} y1={topShort} x2={midX} y2={padY} stroke={line} strokeWidth={lineW} />
+    <Line x1={midX} y1={bottomShort} x2={midX} y2={padY + innerH} stroke={line} strokeWidth={lineW} />
+    {/* 雙打長發球線 */}
+    <Line x1={padX} y1={topDblLong} x2={padX + innerW} y2={topDblLong} stroke={line} strokeWidth={lineW} />
+    <Line x1={padX} y1={bottomDblLong} x2={padX + innerW} y2={bottomDblLong} stroke={line} strokeWidth={lineW} />
   </>
 );
 }
@@ -220,7 +249,7 @@ return (
 
       {showFilterChips && (
         <View style={{ flexDirection: 'row', marginTop: 8 }}>
-          {/* 略，若要內建篩選再開 */}
+          {/* 如需在內建控制列顯示篩選 chips，可在此補上。 */}
         </View>
       )}
     </View>

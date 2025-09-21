@@ -81,90 +81,15 @@ if (error) throw error;
 return (data || []) as SessionRow[];
 }
 
-export async function listSessionAttendees(sessionId: string) {
-// A) 先嘗試從 view 讀（若你的 view 有 checked_in 就會帶回來）
-try {
+export async function listSessionAttendees(session_id: string): Promise<Attendee[]> {
 const { data, error } = await supa
-.from('session_attendees_view')
-.select('id,session_id,buddy_id,name,level,gender,handedness,checked_in')
-.eq('session_id', sessionId)
-.order('id', { ascending: true });
-if (!error && data) {
-return (data || []).map((r: any) => ({
-id: r.id as string,
-session_id: r.session_id as string,
-buddy_id: (r.buddy_id ?? null) as string | null,
-display_name: String(r.name || ''),
-level: (r.level ?? null) as number | null,
-gender: (r.gender ?? null) as 'M'|'F'|'U'|null,
-handedness: (r.handedness ?? null) as 'L'|'R'|'U'|null,
-checked_in: !!(r.checked_in ?? true), // 若 view 沒給，一律視為 true
-}));
-}
-} catch {}
-
-// B) 若 view 存在但沒有 checked_in 欄位，就用精簡欄位再試
-try {
-const { data, error } = await supa
-.from('session_attendees_view')
-.select('id,session_id,buddy_id,name,level,gender,handedness')
-.eq('session_id', sessionId)
-.order('id', { ascending: true });
-if (!error && data) {
-return (data || []).map((r: any) => ({
-id: r.id as string,
-session_id: r.session_id as string,
-buddy_id: (r.buddy_id ?? null) as string | null,
-display_name: String(r.name || ''),
-level: (r.level ?? null) as number | null,
-gender: (r.gender ?? null) as 'M'|'F'|'U'|null,
-handedness: (r.handedness ?? null) as 'L'|'R'|'U'|null,
-checked_in: true, // 沒欄位就預設已報到
-}));
-}
-} catch {}
-
-// C) 再退回查表（表沒有 checked_in 就不要 select 它）
-const { data: raw, error: e2 } = await supa
 .from('session_attendees')
-.select('id,session_id,buddy_id')
-.eq('session_id', sessionId)
-.order('id', { ascending: true });
-if (e2) throw e2;
-
-const ids = (raw || []).map((r: any) => r.buddy_id).filter(Boolean);
-const meta = new Map<string, { name?: string; level?: number|null; gender?: any; handedness?: any }>();
-if (ids.length) {
-const { data: bs } = await supa
-.from('buddies')
-.select('id,name,level,gender,handedness')
-.in('id', ids as any);
-(bs || []).forEach((b: any) =>
-meta.set(b.id, {
-name: b.name || '',
-level: b.level ?? null,
-gender: b.gender ?? null,
-handedness: b.handedness ?? null,
-}),
-);
+.select('*')
+.eq('session_id', session_id)
+.order('created_at', { ascending: true });
+if (error) throw error;
+return (data || []) as Attendee[];
 }
-
-return (raw || []).map((r: any) => {
-const b = meta.get(r.buddy_id) || {};
-return {
-id: r.id as string,
-session_id: r.session_id as string,
-buddy_id: (r.buddy_id ?? null) as string | null,
-display_name: String(b.name || ''),
-level: (b.level ?? null) as number | null,
-gender: (b.gender ?? null) as 'M'|'F'|'U'|null,
-handedness: (b.handedness ?? null) as 'L'|'R'|'U'|null,
-checked_in: true, // 表沒有此欄，一律視為已報到
-};
-});
-}
-
-
 
 export async function upsertAttendee(a: Omit<Attendee,'id'|'created_at'> & { id?: string }) {
 const payload = { ...a };
@@ -199,32 +124,31 @@ return data as string; // round_id
 }
 
 export async function listRounds(session_id: string): Promise<Array<RoundRow & { matches: RoundMatch[] }>> {
-// 只選一定存在的欄位，避免資料庫沒有的欄位（meta/start_at/end_at/created_at）造成 5xx
+// 取 rounds（不要用空字串，改用 '*' 或明確欄位）
 const { data: rounds, error: re } = await supa
 .from('session_rounds')
-.select('id, session_id, index_no, status')
+.select('id, session_id, index_no, start_at, end_at, status, meta, created_at')
 .eq('session_id', session_id)
 .order('index_no', { ascending: true });
 
 if (re) throw re;
-// 這裡用 any 承接，以免你的 RoundRow 型別還包含可選欄位時產生型別警告
-const arr = (rounds || []) as any[];
+const arr = (rounds || []) as RoundRow[];
 
-// 批次撈每輪的 matches
+// 批次撈 matches
 const ids = arr.map(r => r.id);
 if (!ids.length) return arr.map(r => ({ ...r, matches: [] }));
 
 const { data: matches, error: me } = await supa
 .from('round_matches')
-.select('id, round_id, court_no, team_a, team_b, result')
+.select('id, round_id, court_no, team_a, team_b, result, created_at')
 .in('round_id', ids as any)
 .order('court_no', { ascending: true });
 
 if (me) throw me;
 
 const map = new Map<string, RoundMatch[]>();
-(matches || []).forEach((m: any) => {
-const rid = String(m.round_id);
+(matches || []).forEach((m) => {
+const rid = (m as any).round_id as string;
 if (!map.has(rid)) map.set(rid, []);
 map.get(rid)!.push(m as RoundMatch);
 });
@@ -241,15 +165,4 @@ next?: { index: number; planned_start_at?: string|null; matchesPreview: any[] } 
 const { data, error } = await supa.rpc('list_projection', { p_session_id: session_id });
 if (error) throw error;
 return data as any;
-}
-
-export async function setRoundStatus(
-roundId: string,
-status: 'planned'|'published'|'ongoing'|'finished'
-): Promise<void> {
-const { error } = await supa
-.from('session_rounds')
-.update({ status })
-.eq('id', roundId);
-if (error) throw error;
 }

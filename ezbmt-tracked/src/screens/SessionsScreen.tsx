@@ -36,30 +36,11 @@ setDate('2025-01-01'); setCourts('3'); setRoundMin('15'); load();
 const renderItem = ({ item }: any) => (
 <View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:10, marginBottom:10 }}>
 <Text style={{ color:C.text, fontWeight:'600' }}>{item.date}　{item.courts} 場 / 每輪 {item.round_minutes} 分鐘</Text>
-<View style={{ flexDirection:'row', marginTop:8, flexWrap:'wrap' }}>
-<Pressable
-onPress={()=>nav.navigate('SessionCheckIn', { sessionId: item.id, clubId })}
-style={{ backgroundColor:C.btn, paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
->
+<View style={{ flexDirection:'row', marginTop:8 }}>
+<Pressable onPress={()=>nav.navigate('SessionCheckIn', { sessionId: item.id, clubId })} style={{ backgroundColor:C.btn, paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8 }}>
 <Text style={{ color:'#fff' }}>報到名單</Text>
 </Pressable>
-
-    {/* 新增：進階排點（pairRound） */}
-    <Pressable
-      onPress={()=>nav.navigate('ClubPairing', { sessionId: item.id })}
-      style={{ backgroundColor:'#00695c', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
-    >
-      <Text style={{ color:'#fff' }}>排點（進階）</Text>
-    </Pressable>
-
-    {/* 新增：看板（即時板/下一輪倒數） */}
-    <Pressable
-      onPress={()=>nav.navigate('ClubBoard', { sessionId: item.id })}
-      style={{ backgroundColor:'#5d4037', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
-    >
-      <Text style={{ color:'#fff' }}>看板</Text>
-    </Pressable>
-  </View>
+</View>
 </View>
 );
 

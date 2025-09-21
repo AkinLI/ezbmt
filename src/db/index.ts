@@ -158,4 +158,13 @@ upsertAttendee,
 removeAttendee,
 upsertRound,
 listProjection,
+setRoundStatus,
 } from './supa_club';
+
+export const listClubMembers = (supaDao as any).listClubMembers; 
+export const upsertClubMember = (supaDao as any).upsertClubMember; 
+export const deleteClubMember = (supaDao as any).deleteClubMember; 
+export const inviteClubMemberByEmail = (supaDao as any).inviteClubMemberByEmail;
+
+export const getSession = (supaDao as any).getSession;
+export const listMyInviteContactsWithNames = (supaDao as any).listMyInviteContactsWithNames;

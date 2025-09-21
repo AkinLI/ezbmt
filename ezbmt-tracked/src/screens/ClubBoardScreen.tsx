@@ -1,9 +1,7 @@
 import React from 'react';
 import { View, Text, ScrollView, Pressable, ActivityIndicator, StatusBar } from 'react-native';
 import { useRoute } from '@react-navigation/native';
-import { listProjection, listRounds } from '../db';
-import { supa } from '../lib/supabase';
-import type { RoundRow } from '../db/supa_club';
+import { listProjection } from '../db';
 
 const C = { bg: '#111', card: '#1e1e1e', border: '#333', text: '#fff', sub: '#bbb', good: '#90caf9', bad: '#ef9a9a' };
 
@@ -49,39 +47,6 @@ const t = setInterval(() => fetchProj().catch(()=>{}), 5000);
 return () => clearInterval(t);
 }, [sid]);
 
-// Realtime 訂閱：round_courts / round_results 的變化即刷新（保留 5 秒輪詢備援）
-React.useEffect(() => {
-if (!sid) return;
-let channel: ReturnType<typeof supa.channel> | null = null;
-
-(async () => {
-  try {
-    const rounds = await listRounds(sid) as Array<RoundRow & { matches: any[] }>;
-    const set = new Set((rounds || []).map((r: RoundRow) => r.id));
-
-    channel = supa
-      .channel('club-board-' + sid)
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'round_courts' },
-        (payload: any) => {
-          const rid = payload?.new?.round_id || payload?.old?.round_id;
-          if (rid && set.has(String(rid))) fetchProj().catch(()=>{});
-        }
-      )
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'round_results' },
-        (payload: any) => {
-          const rid = payload?.new?.round_id || payload?.old?.round_id;
-          if (rid && set.has(String(rid))) fetchProj().catch(()=>{});
-        }
-      )
-      .subscribe();
-  } catch {}
-})();
-
-return () => { if (channel) channel.unsubscribe(); };
-}, [sid]);
-
 async function fetchProj() {
 if (!sid) return;
 setRefreshing(true);
@@ -100,7 +65,7 @@ setOffsetMs(server.getTime() - Date.now());
   setNowStr(nowLabel);
   setNextStr(nextLabel);
 } catch (e:any) {
-  // 保留舊資料
+  // 保留舊資料，顯示錯誤可略
 } finally {
   setLoading(false);
   setRefreshing(false);

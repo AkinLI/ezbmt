@@ -19,6 +19,18 @@ import MatchMembersScreen from './screens/MatchMembersScreen';
 import SpeedCam from './screens/SpeedCamScreen';
 import HomeScreen from './screens/HomeScreen';
 import ClubHomeScreen from './screens/ClubHomeScreen';
+import ClubsScreen from './screens/ClubsScreen';
+import ClubDashboardScreen from './screens/ClubDashboardScreen';
+import BuddiesScreen from './screens/BuddiesScreen';
+import SessionsScreen from './screens/SessionsScreen';
+import SessionCheckInScreen from './screens/SessionCheckInScreen';
+import SessionPairingScreen from './screens/SessionPairingScreen';
+import ClubScoreboardScreen from './screens/ClubScoreboardScreen';
+import ClubChatScreen from './screens/ClubChatScreen';
+import ClubMediaScreen from './screens/ClubMediaScreen';
+import PairingScreen from './screens/PairingScreen';
+import ClubBoardScreen from './screens/ClubBoardScreen';
+import ClubStatsScreen from './screens/ClubStatsScreen';
 
 
 const Stack = createNativeStackNavigator();
@@ -56,6 +68,18 @@ screenOptions={{ headerBackTitle: '', ...headerDark }}
 <Stack.Screen name="Settings" component={SettingsScreen} options={{ title: '設定' }} />
 <Stack.Screen name="Replay" component={ReplayScreen} options={{ title: '路徑回放' }} />
 <Stack.Screen name="SpeedCam" component={SpeedCam} options={{ title: '測速' }} />
+<Stack.Screen name="Clubs" component={ClubsScreen} options={{ title: '我的社團' }} />
+<Stack.Screen name="ClubDashboard" component={ClubDashboardScreen} options={{ title: '社團主頁' }} />
+<Stack.Screen name="Buddies" component={BuddiesScreen} options={{ title: '球友名單' }} />
+<Stack.Screen name="Sessions" component={SessionsScreen} options={{ title: '場次' }} />
+<Stack.Screen name="SessionCheckIn" component={SessionCheckInScreen} options={{ title: '報到名單' }} />
+<Stack.Screen name="SessionPairing" component={SessionPairingScreen} options={{ title: '排點' }} />
+<Stack.Screen name="ClubScoreboard" component={ClubScoreboardScreen} options={{ title: '計分板' }} />
+<Stack.Screen name="ClubChat" component={ClubChatScreen} options={{ title: '社團聊天室' }} />
+<Stack.Screen name="ClubMedia" component={ClubMediaScreen} options={{ title: '社團媒體' }} />
+<Stack.Screen name="ClubPairing" component={PairingScreen} options={{ title: '社團排點' }} />
+<Stack.Screen name="ClubBoard" component={ClubBoardScreen} options={{ title: '看板' }} />
+<Stack.Screen name="ClubStats" component={ClubStatsScreen} options={{ title: '社團統計' }} />
 </Stack.Navigator>
 );
 }

@@ -18,7 +18,6 @@ const Btn = ({ title, onPress, color='#1976d2' }: any) => (
 return (
 <View style={{ flex:1, backgroundColor:C.bg, padding:16 }}>
 <Text style={{ color:C.text, fontSize:18, fontWeight:'700', marginBottom:12 }}>社團主頁</Text>
-<Btn title="成員" onPress={()=>nav.navigate('ClubMembers', { clubId })} />
 <Btn title="球友名單" onPress={()=>nav.navigate('Buddies', { clubId })} />
 <Btn title="場次" onPress={()=>nav.navigate('Sessions', { clubId })} />
 <Btn title="聊天室" onPress={()=>nav.navigate('ClubChat', { clubId })} />

@@ -470,8 +470,26 @@ if (error) throw error;
 return data || [];
 }
 export async function createClub(args: { name: string; description?: string }) {
-const { error } = await supa.from('clubs').insert({ name: args.name, description: args.description ?? null });
+// 先建立社團
+const { data, error } = await supa
+.from('clubs')
+.insert({ name: args.name, description: args.description ?? null })
+.select('id')
+.single();
 if (error) throw error;
+
+// 再把建立者加為 owner（若已存在就覆寫角色）
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (uid && data?.id) {
+const { error: e2 } = await supa
+.from('club_members')
+.upsert(
+{ club_id: data.id as string, user_id: uid, role: 'owner' },
+{ onConflict: 'club_id,user_id' }
+);
+if (e2) throw e2;
+}
 }
 export async function getMyClubRoles(clubIds: string[]): Promise<Record<string,string>> {
 if (!clubIds.length) return {};
@@ -512,31 +530,87 @@ if (error) throw error;
 
 // Attendees
 export async function listSessionAttendees(sessionId: string) {
+// A) 先嘗試從 view 讀（若你的 view 有 checked_in 就會帶回來）
+try {
 const { data, error } = await supa
-.from('session_attendees_view') // 方便帶出 buddy name 的 view，若無可改 join 兩次查詢
-.select('id,session_id,buddy_id,name')
+.from('session_attendees_view')
+.select('id,session_id,buddy_id,name,level,gender,handedness,checked_in')
 .eq('session_id', sessionId)
-.order('created_at',{ ascending:true });
-if (error) {
-// 如果尚未建立 view，退回純表
-const { data: raw } = await supa.from('session_attendees').select('id,session_id,buddy_id').eq('session_id', sessionId);
-const ids = (raw||[]).map((r:any)=>r.buddy_id);
-if (!ids.length) return [];
-const { data: bs } = await supa.from('buddies').select('id,name').in('id', ids as any);
-const nameMap = new Map((bs||[]).map((b:any)=>[b.id,b.name]));
-return (raw||[]).map((r:any)=>({ ...r, name: nameMap.get(r.buddy_id)||'' }));
+.order('id', { ascending: true });
+if (!error && data) {
+return (data || []).map((r: any) => ({
+id: r.id as string,
+session_id: r.session_id as string,
+buddy_id: (r.buddy_id ?? null) as string | null,
+display_name: String(r.name || ''),
+level: (r.level ?? null) as number | null,
+gender: (r.gender ?? null) as 'M'|'F'|'U'|null,
+handedness: (r.handedness ?? null) as 'L'|'R'|'U'|null,
+checked_in: !!(r.checked_in ?? true), // 若 view 沒給，一律視為 true
+}));
 }
-return data || [];
+} catch {}
+
+// B) 若 view 存在但沒有 checked_in 欄位，就用精簡欄位再試
+try {
+const { data, error } = await supa
+.from('session_attendees_view')
+.select('id,session_id,buddy_id,name,level,gender,handedness')
+.eq('session_id', sessionId)
+.order('id', { ascending: true });
+if (!error && data) {
+return (data || []).map((r: any) => ({
+id: r.id as string,
+session_id: r.session_id as string,
+buddy_id: (r.buddy_id ?? null) as string | null,
+display_name: String(r.name || ''),
+level: (r.level ?? null) as number | null,
+gender: (r.gender ?? null) as 'M'|'F'|'U'|null,
+handedness: (r.handedness ?? null) as 'L'|'R'|'U'|null,
+checked_in: true, // 沒欄位就預設已報到
+}));
 }
-export async function upsertSessionAttendee(args: { sessionId: string; buddyId: string }) {
-const { error } = await supa.from('session_attendees').insert({ session_id: args.sessionId, buddy_id: args.buddyId });
-if (error) throw error;
-}
-export async function removeSessionAttendee(id: string) {
-const { error } = await supa.from('session_attendees').delete().eq('id', id);
-if (error) throw error;
+} catch {}
+
+// C) 再退回查表（表沒有 checked_in 就不要 select 它）
+const { data: raw, error: e2 } = await supa
+.from('session_attendees')
+.select('id,session_id,buddy_id')
+.eq('session_id', sessionId)
+.order('id', { ascending: true });
+if (e2) throw e2;
+
+const ids = (raw || []).map((r: any) => r.buddy_id).filter(Boolean);
+const meta = new Map<string, { name?: string; level?: number|null; gender?: any; handedness?: any }>();
+if (ids.length) {
+const { data: bs } = await supa
+.from('buddies')
+.select('id,name,level,gender,handedness')
+.in('id', ids as any);
+(bs || []).forEach((b: any) =>
+meta.set(b.id, {
+name: b.name || '',
+level: b.level ?? null,
+gender: b.gender ?? null,
+handedness: b.handedness ?? null,
+}),
+);
 }
 
+return (raw || []).map((r: any) => {
+const b = meta.get(r.buddy_id) || {};
+return {
+id: r.id as string,
+session_id: r.session_id as string,
+buddy_id: (r.buddy_id ?? null) as string | null,
+display_name: String(b.name || ''),
+level: (b.level ?? null) as number | null,
+gender: (b.gender ?? null) as 'M'|'F'|'U'|null,
+handedness: (b.handedness ?? null) as 'L'|'R'|'U'|null,
+checked_in: true, // 表沒有此欄，一律視為已報到
+};
+});
+}
 
 // ---------- Rounds / Courts ----------
 /*
@@ -573,15 +647,46 @@ if (error) throw error;
 
 // 取該場地的隊員姓名
 export async function getRoundCourtTeams(args: { roundId: string; courtNo: number }): Promise<{ A:[string,string]; B:[string,string] }> {
-const { data, error } = await supa.from('round_courts').select('team_a_ids,team_b_ids').eq('round_id', args.roundId).eq('court_no', args.courtNo).maybeSingle();
-if (error) throw error;
+// 優先：round_courts
+try {
+const { data, error } = await supa
+.from('round_courts')
+.select('team_a_ids,team_b_ids')
+.eq('round_id', args.roundId)
+.eq('court_no', args.courtNo)
+.maybeSingle();
+if (!error && data) {
 const aIds = (data?.team_a_ids || []) as string[];
 const bIds = (data?.team_b_ids || []) as string[];
 const ids = [...aIds, ...bIds].filter(Boolean);
-if (!ids.length) return { A: ['A0','A1'], B: ['B0','B1'] };
-const { data: buddies } = await supa.from('buddies').select('id,name').in('id', ids as any);
-const nameOf = (id?:string) => (buddies||[]).find(b=>b.id===id)?.name || (id ? id.slice(0,6)+'…' : '');
+if (ids.length) {
+const { data: buddies } = await supa
+.from('buddies')
+.select('id,name')
+.in('id', ids as any);
+const nameOf = (id?: string) =>
+(buddies || []).find(b => b.id === id)?.name || (id ? id.slice(0, 6) + '…' : '');
 return { A: [nameOf(aIds[0]), nameOf(aIds[1])], B: [nameOf(bIds[0]), nameOf(bIds[1])] };
+}
+}
+} catch {}
+
+// 後援：round_matches（PairingScreen 發布的 upsert_round 可能只寫 matches）
+const { data: rm, error: me } = await supa
+.from('round_matches')
+.select('team_a, team_b, court_no')
+.eq('round_id', args.roundId)
+.eq('court_no', args.courtNo)
+.maybeSingle();
+if (me) throw me;
+
+const Aplayers = (rm as any)?.team_a?.players || [];
+const Bplayers = (rm as any)?.team_b?.players || [];
+const toName = (x: any) => (x?.name && String(x.name)) || '';
+return {
+A: [toName(Aplayers[0]) || 'A0', toName(Aplayers[1]) || 'A1'],
+B: [toName(Bplayers[0]) || 'B0', toName(Bplayers[1]) || 'B1'],
+};
 }
 
 // ---------- Scoreboard (round_results) ----------
@@ -601,9 +706,25 @@ export async function getMyClubRole(clubId: string): Promise<string|null> {
 const { data: me } = await supa.auth.getUser();
 const uid = me?.user?.id;
 if (!uid) return null;
-const { data, error } = await supa.from('club_members').select('role').eq('club_id', clubId).eq('user_id', uid).maybeSingle();
-if (error) return null;
-return data?.role ? String(data.role) : null;
+
+// 先查 club_members
+const { data: cm } = await supa
+.from('club_members')
+.select('role')
+.eq('club_id', clubId)
+.eq('user_id', uid)
+.maybeSingle();
+if (cm?.role) return String(cm.role);
+
+// 後援：若 clubs.created_by 是我，視為 owner
+const { data: club } = await supa
+.from('clubs')
+.select('created_by')
+.eq('id', clubId)
+.maybeSingle();
+if (club?.created_by && String(club.created_by) === uid) return 'owner';
+
+return null;
 }
 
 // 2) Club Chats
@@ -625,12 +746,11 @@ const { data, error } = await supa.from('media').select('*').eq('owner_type','cl
 if (error) throw error;
 return data || [];
 }
-export async function insertClubMedia(args: { clubId: string; url: string; description?: string }) {
-const { error } = await supa.from('media').insert({
-owner_type: 'club', owner_id: args.clubId, kind: 'youtube', url: args.url, description: args.description ?? null,
-});
-if (error) throw error;
-}
+
+export async function insertClubMedia(args: { clubId: string; kind: 'youtube'|'photo'; url: string; description?: string }) { 
+const { error } = await supa.from('media').insert({ 
+owner_type: 'club', owner_id: args.clubId, kind: args.kind, url: args.url, description: args.description ?? null, }); 
+if (error) throw error; }
 
 export type SessionRow = {
 id: string;
@@ -747,38 +867,38 @@ return data as string; // round_id
 
 
 export async function listRounds(session_id: string): Promise<Array<RoundRow & { matches: RoundMatch[] }>> {
-// 取 rounds（不要用空字串，改用 '*' 或明確欄位）
+// 只選一定存在的欄位，避免資料庫沒有的欄位（meta/start_at/end_at/created_at）造成 5xx
 const { data: rounds, error: re } = await supa
 .from('session_rounds')
-.select('id, session_id, index_no, start_at, end_at, status, meta, created_at')
+.select('id, session_id, index_no, status')
 .eq('session_id', session_id)
 .order('index_no', { ascending: true });
 
 if (re) throw re;
-const arr = (rounds || []) as RoundRow[];
+// 這裡用 any 承接，以免你的 RoundRow 型別還包含可選欄位時產生型別警告
+const arr = (rounds || []) as any[];
 
-// 批次撈 matches
+// 批次撈每輪的 matches
 const ids = arr.map(r => r.id);
 if (!ids.length) return arr.map(r => ({ ...r, matches: [] }));
 
 const { data: matches, error: me } = await supa
 .from('round_matches')
-.select('id, round_id, court_no, team_a, team_b, result, created_at')
+.select('id, round_id, court_no, team_a, team_b, result')
 .in('round_id', ids as any)
 .order('court_no', { ascending: true });
 
 if (me) throw me;
 
 const map = new Map<string, RoundMatch[]>();
-(matches || []).forEach((m) => {
-const rid = (m as any).round_id as string;
+(matches || []).forEach((m: any) => {
+const rid = String(m.round_id);
 if (!map.has(rid)) map.set(rid, []);
 map.get(rid)!.push(m as RoundMatch);
 });
 
 return arr.map(r => ({ ...r, matches: map.get(r.id) || [] }));
 }
-
 
 /** 投影看板/倒數 */
 export async function listProjection(session_id: string): Promise<{
@@ -791,3 +911,50 @@ if (error) throw error;
 return data as any;
 }
 
+/* Club members */ 
+export async function listClubMembers(clubId: string): Promise<Array<{ id:string; user_id:string; role:string; name:string; email?:string|null }>> {
+const { data, error } = await supa
+.rpc('list_club_members_with_names', { p_club_id: clubId });
+if (error) throw error;
+return (data || []).map((r: any) => ({
+id: r.id as string,
+user_id: r.user_id as string,
+role: String(r.role || 'member'),
+name: String(r.name || ''),           // 已是暱稱或 email 前綴
+email: r.email ? String(r.email) : null,
+}));
+}
+    
+export async function upsertClubMember(args: { clubId: string; userId: string; role: string }) 
+{ const { error } = await supa.from('club_members').upsert( 
+  { club_id: args.clubId, user_id: args.userId, role: args.role }, 
+  { onConflict: 'club_id,user_id' } ); if (error) throw error; } 
+  
+  export async function deleteClubMember(id: string) { const { error } = await supa.from('club_members')
+  .delete().eq('id', id); if (error) throw error; } 
+  
+  /* Edge Function: 邀請社團成員（Email） */ 
+  export async function inviteClubMemberByEmail(args: { clubId: string; 
+    email: string; 
+    role: 'owner'|'admin'|'scheduler'|'scorer'|'member' }) 
+    { const { data: sess } = await supa.auth.getSession(); const token = sess?.session?.access_token || null; 
+    if (!token) throw new Error('Not logged in'); 
+    const url = `${SUPABASE_URL}/functions/v1/invite-club-by-email`; 
+    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type':'application/json', 'Authorization': `Bearer ${token}` }
+      , body: JSON.stringify(args), }); 
+      const text = await res.text(); if (!res.ok) { 
+        try { const j = JSON.parse(text); throw new Error(j?.error || j?.message || text || `HTTP ${res.status}`); } 
+        catch { throw new Error(`${res.status} ${res.statusText} : ${text || 'Edge error'}`); } } 
+        try { return JSON.parse(text); } catch { return { ok:true }; } }
+
+export async function getSession(sessionId: string): Promise<{ id:string; date?:string|null; courts?:number|null; round_minutes?:number|null } | null> {
+const { data, error } = await supa
+.from('sessions')
+.select('id,date,courts,round_minutes')
+.eq('id', sessionId)
+.maybeSingle();
+if (error) throw error;
+return (data || null) as any;
+}
+
+        

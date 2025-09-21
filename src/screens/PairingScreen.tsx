@@ -1,55 +1,90 @@
 import React from 'react';
-import { View, Text, FlatList, Pressable, TextInput, Alert, ScrollView, ActivityIndicator } from 'react-native';
-import { useRoute } from '@react-navigation/native';
-import { listSessionAttendees, listRounds, upsertRound } from '../db';
-import type { Attendee, RoundRow, RoundMatch } from '../db/supa_club'; // Fix: 補上型別
+import { View, Text, Pressable, TextInput, Alert, ScrollView, ActivityIndicator } from 'react-native';
+import { useRoute, useNavigation } from '@react-navigation/native';
+import { listSessionAttendees, listRounds, upsertRound, getSession, setRoundStatus } from '../db';
+import type { Attendee, RoundRow, RoundMatch } from '../db/supa_club';
 import { pairRound, AttendeeLite, Constraints } from '../club/pairing';
+import { getPrefs, savePrefs, clearPrefs, type PairingPrefs } from '../lib/pairingPrefs';
 
 const C = { bg:'#111', card:'#1e1e1e', border:'#333', text:'#fff', sub:'#bbb', btn:'#1976d2', bad:'#d32f2f' };
 
 export default function PairingScreen() {
 const route = useRoute<any>();
+const navigation = useNavigation<any>();
 const sessionId: string | undefined = route.params?.sessionId;
 
 const [loading, setLoading] = React.useState(true);
 const [atts, setAtts] = React.useState<Attendee[]>([]);
-const [rounds, setRounds] = React.useState<Array<{ id:string; index_no:number; matches:any[] }>>([]);
+const [rounds, setRounds] = React.useState<Array<{ id:string; index_no:number; status?:string|null; matches:any[] }>>([]);
 
+// session meta
+const [sessionDate, setSessionDate] = React.useState<string>('');
+const [sessionDefaults, setSessionDefaults] = React.useState<{ courts?: number|null; round_minutes?: number|null }>({});
+
+// 參數（可記憶）
 const [courts, setCourts] = React.useState('4');
 const [teamSize, setTeamSize] = React.useState<'1'|'2'>('2');
 const [roundMinutes, setRoundMinutes] = React.useState('15');
-const [partnerCooldown, setPartnerCooldown] = React.useState('1');   // 最近1輪不可再搭
-const [opponentWindow, setOpponentWindow] = React.useState('1');     // 最近1輪避免對上
+const [partnerCooldown, setPartnerCooldown] = React.useState('1');
+const [opponentWindow, setOpponentWindow] = React.useState('1');
 const [maxLevelDiffPerPair, setMaxLevelDiffPerPair] = React.useState('5');
 const [preferMixed, setPreferMixed] = React.useState(false);
 
+// 預覽
 const [preview, setPreview] = React.useState<null | { matches: Array<{ teamA:any; teamB:any }>; waiting: any[] }>(null);
 const [genBusy, setGenBusy] = React.useState(false);
 const [publishBusy, setPublishBusy] = React.useState(false);
+const [savingPrefs, setSavingPrefs] = React.useState(false);
+const [resettingPrefs, setResettingPrefs] = React.useState(false);
 
-async function loadAll() {
+const loadAll = React.useCallback(async () => {
 if (!sessionId) return;
 setLoading(true);
 try {
-const sid = sessionId as string; // Fix: 斷言為 string
-const [a, r] = await Promise.all([
-listSessionAttendees(sid),
-listRounds(sid),
-]);
-setAtts(a);
-// Fix: 為 map 參數加上型別，避免 implicit any
-setRounds(r.map((x: RoundRow & { matches: RoundMatch[] }) => ({
-id: x.id,
-index_no: x.index_no,
-matches: x.matches as any[],
-})));
+const sid = sessionId as string;
+
+  // A) session 預設帶入
+  try {
+    const s = await getSession(sid);
+    if (s) {
+      if (s.courts != null && Number.isFinite(Number(s.courts))) setCourts(String(Number(s.courts)));
+      if (s.round_minutes != null && Number.isFinite(Number(s.round_minutes))) setRoundMinutes(String(Number(s.round_minutes)));
+      setSessionDate(s.date || '');
+      setSessionDefaults({ courts: s.courts ?? null, round_minutes: s.round_minutes ?? null });
+    }
+  } catch {}
+
+  // B) 本機偏好覆寫
+  try {
+    const p = await getPrefs(sid);
+    if (p) {
+      if (p.courts != null) setCourts(p.courts);
+      if (p.teamSize != null) setTeamSize(p.teamSize);
+      if (p.roundMinutes != null) setRoundMinutes(p.roundMinutes);
+      if (p.partnerCooldown != null) setPartnerCooldown(p.partnerCooldown);
+      if (p.opponentWindow != null) setOpponentWindow(p.opponentWindow);
+      if (p.maxLevelDiffPerPair != null) setMaxLevelDiffPerPair(p.maxLevelDiffPerPair);
+      if (typeof p.preferMixed === 'boolean') setPreferMixed(!!p.preferMixed);
+    }
+  } catch {}
+
+  // C) 名單與輪次
+  const [a, r] = await Promise.all([listSessionAttendees(sid), listRounds(sid)]);
+  setAtts(a);
+  setRounds((r || []).map((x: RoundRow & { matches: RoundMatch[] }) => ({
+    id: x.id,
+    index_no: Number(x.index_no || 0),
+    status: (x as any).status ?? null,
+    matches: (x as any).matches || [],
+  })));
 } catch (e:any) {
-Alert.alert('載入失敗', String(e?.message || e));
+  Alert.alert('載入失敗', String(e?.message||e));
 } finally {
-setLoading(false);
+  setLoading(false);
 }
-}
-React.useEffect(() => { loadAll(); }, [sessionId]);
+}, [sessionId]);
+
+React.useEffect(() => { loadAll(); }, [loadAll]);
 
 if (!sessionId) {
 return (
@@ -69,14 +104,14 @@ return (
 const nowIndex = rounds.length ? Math.max(...rounds.map(r => Number(r.index_no||0))) : 0;
 const nextIndex = nowIndex + 1;
 
-function toLite(a: Attendee): AttendeeLite {
-return { id: a.id, name: a.display_name, level: a.level ?? undefined, gender: (a.gender as any) ?? 'U' };
+function toLite(a: Attendee) {
+return { id: a.buddy_id || a.id, name: a.display_name, level: a.level ?? undefined, gender: (a.gender as any) ?? 'U' };
 }
 
 async function genPreview() {
 setGenBusy(true);
 try {
-const candidates = atts.filter(a => a.checked_in !== false).map(toLite);
+const candidates = atts.map(toLite);
 const cons: Constraints = {
 courts: Math.max(1, Number(courts||'1')),
 teamSize: (teamSize==='1' ? 1 : 2),
@@ -86,16 +121,12 @@ maxLevelDiffPerPair: Math.max(0, Number(maxLevelDiffPerPair||'0')),
 preferMixedGender: !!preferMixed,
 };
 const prevRounds = rounds.map(r => ({ index_no: Number(r.index_no||0), matches: r.matches || [] }));
-
-  const res = pairRound(candidates, cons, prevRounds);
-  setPreview({
-    matches: res.matches,
-    waiting: res.waiting,
-  });
+const res = pairRound(candidates, cons, prevRounds);
+setPreview({ matches: res.matches, waiting: res.waiting });
 } catch (e:any) {
-  Alert.alert('產生失敗', String(e?.message || e));
+Alert.alert('產生失敗', String(e?.message || e));
 } finally {
-  setGenBusy(false);
+setGenBusy(false);
 }
 }
 
@@ -106,14 +137,13 @@ return;
 }
 setPublishBusy(true);
 try {
-const sid = sessionId as string; // Fix: 斷言為 string
+const sid = sessionId as string;
 const start = new Date();
-// Fix: minute → ms 的乘法正確寫法 601000（原本少了 *）
 const end = new Date(start.getTime() + Math.max(5, Number(roundMinutes||'15')) * 60 * 1000);
 
   const payload = {
     index_no: nextIndex,
-    start_at: start.toISOString(),
+    start_at: start.toISOString(), // 若後端沒有此欄會忽略
     end_at: end.toISOString(),
     status: 'published' as const,
     matches: preview.matches.map((m, i) => ({
@@ -125,7 +155,7 @@ const end = new Date(start.getTime() + Math.max(5, Number(roundMinutes||'15')) *
   await upsertRound(sid, payload);
   Alert.alert('已發布', `第 ${nextIndex} 輪已建立`);
   setPreview(null);
-  loadAll();
+  await loadAll();
 } catch (e:any) {
   Alert.alert('發布失敗', String(e?.message || e));
 } finally {
@@ -133,30 +163,91 @@ const end = new Date(start.getTime() + Math.max(5, Number(roundMinutes||'15')) *
 }
 }
 
-const AttendeeRow = ({ a }: { a: Attendee }) => (
-<View style={{ padding:8, backgroundColor:'#222', borderRadius:8, marginRight:8, marginBottom:8, borderColor:C.border, borderWidth:1 }}>
-<Text style={{ color:C.text, fontWeight:'600' }}>{a.display_name}</Text>
-<Text style={{ color:C.sub, marginTop:2 }}>L{a.level ?? '-'} {a.gender ?? ''} {a.handedness ?? ''} {a.checked_in ? '' : '（未報到）'}</Text>
+// 儲存 / 還原 參數
+const onSavePrefs = async () => {
+try {
+setSavingPrefs(true);
+const prefs: PairingPrefs = { courts, teamSize, roundMinutes, partnerCooldown, opponentWindow, maxLevelDiffPerPair, preferMixed };
+await savePrefs(sessionId!, prefs);
+Alert.alert('已儲存', '已記住這個場次的排點參數');
+} catch (e:any) {
+Alert.alert('儲存失敗', String(e?.message||e));
+} finally {
+setSavingPrefs(false);
+}
+};
+const onResetPrefs = async () => {
+try {
+setResettingPrefs(true);
+await clearPrefs(sessionId!);
+setCourts(String(Number(sessionDefaults.courts ?? 4)));
+setRoundMinutes(String(Number(sessionDefaults.round_minutes ?? 15)));
+setTeamSize('2'); setPartnerCooldown('1'); setOpponentWindow('1'); setMaxLevelDiffPerPair('5'); setPreferMixed(false);
+Alert.alert('已還原', '已還原為場次預設（或系統預設）');
+} catch (e:any) {
+Alert.alert('還原失敗', String(e?.message||e));
+} finally {
+setResettingPrefs(false);
+}
+};
+
+// 狀態操作
+const onMarkOngoing = async (roundId: string) => {
+try { await setRoundStatus(roundId, 'ongoing'); await loadAll(); }
+catch (e:any){ Alert.alert('設定失敗', String(e?.message || e)); }
+};
+const onMarkFinished = async (roundId: string) => {
+try { await setRoundStatus(roundId, 'finished'); await loadAll(); }
+catch (e:any){ Alert.alert('設定失敗', String(e?.message || e)); }
+};
+
+const AttendeeCard = ({ a }: { a: Attendee }) => (
+<View style={{ width:'48%', minWidth:140, padding:8, backgroundColor:'#222', borderRadius:8, marginRight:'2%', marginBottom:8, borderColor:C.border, borderWidth:1 }}>
+<Text style={{ color:C.text, fontWeight:'600' }}>{a.display_name || ''}</Text>
+<Text style={{ color:C.sub, marginTop:2 }}>
+{`L${a.level ?? '-'}`} {a.gender ?? ''} {a.handedness ?? ''}
+</Text>
 </View>
 );
 
 const MatchCard = ({ m, idx }: { m: any; idx: number }) => (
 <View style={{ padding:10, backgroundColor:C.card, borderRadius:10, borderColor:C.border, borderWidth:1, marginBottom:10 }}>
-<Text style={{ color:C.text, fontWeight:'700', marginBottom:6 }}>場地 {idx+1}</Text>
-<Text style={{ color:'#90caf9' }}>{m.teamA.players.map((p:any)=>p.name).join('、')}（L{m.teamA.avgLevel ?? '-'}）</Text>
+<Text style={{ color:C.text, fontWeight:'700', marginBottom:6 }}>{`場地 ${idx+1}`}</Text>
+<Text style={{ color:'#90caf9' }}>
+{String((m.teamA?.players||[]).map((p:any)=>p.name).join('、'))}
+{`（L${m.teamA?.avgLevel ?? '-'}）`}
+</Text>
 <Text style={{ color:'#ddd', marginVertical:4 }}>VS</Text>
-<Text style={{ color:'#ef9a9a' }}>{m.teamB.players.map((p:any)=>p.name).join('、')}（L{m.teamB.avgLevel ?? '-'}）</Text>
+<Text style={{ color:'#ef9a9a' }}>
+{String((m.teamB?.players||[]).map((p:any)=>p.name).join('、'))}
+{`（L${m.teamB?.avgLevel ?? '-'}）`}
+</Text>
 </View>
 );
 
+const statusLabel = (s?: string|null) =>
+s === 'published' ? '已發布' :
+s === 'ongoing'  ? '進行中' :
+s === 'finished' ? '已結束' : '—';
+
+const statusChipStyle = (s?: string|null) => {
+const color =
+s === 'published' ? '#1976d2' :
+s === 'ongoing'  ? '#2e7d32' :
+s === 'finished' ? '#757575' : '#555';
+return { borderColor: color, bg: `${color}22`, color };
+};
+
 return (
 <ScrollView style={{ flex:1, backgroundColor:C.bg }} contentContainerStyle={{ padding:12 }}>
-<Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>排點（Session {sessionId.slice(0,8)}…）</Text>
+<Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>
+社團排點{sessionDate ? `（${sessionDate}）` : ''}
+</Text>
 
   {/* 參與名單 */}
-  <Text style={{ color:C.sub, marginBottom:6 }}>參與者（{atts.length}）</Text>
-  <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
-    {atts.map(a => <AttendeeRow key={a.id} a={a} />)}
+  <Text style={{ color:C.sub, marginBottom:6 }}>{`參與者（${atts.length}）`}</Text>
+  <View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
+    {atts.map(a => <AttendeeCard key={a.id} a={a} />)}
   </View>
 
   {/* 參數 */}
@@ -170,9 +261,18 @@ return (
       <Param title="對手避免(輪)" v={opponentWindow} setV={setOpponentWindow} />
       <Param title="同隊等級差上限" v={maxLevelDiffPerPair} setV={setMaxLevelDiffPerPair} />
     </View>
-    <Pressable onPress={()=>setPreferMixed(v=>!v)} style={{ marginTop:8, padding:8, borderRadius:8, borderWidth:1, borderColor:C.border, alignSelf:'flex-start' }}>
-      <Text style={{ color:'#90caf9' }}>{preferMixed ? '混雙偏好：開' : '混雙偏好：關'}</Text>
-    </Pressable>
+
+    <View style={{ flexDirection:'row', flexWrap:'wrap', marginTop:8 }}>
+      <Pressable onPress={()=>setPreferMixed(v=>!v)} style={{ padding:8, borderRadius:8, borderWidth:1, borderColor:C.border, marginRight:8 }}>
+        <Text style={{ color:'#90caf9' }}>{preferMixed ? '混雙偏好：開' : '混雙偏好：關'}</Text>
+      </Pressable>
+      <Pressable onPress={onSavePrefs} style={{ padding:8, borderRadius:8, backgroundColor:savingPrefs?'#555':'#1976d2', marginRight:8 }} disabled={savingPrefs}>
+        <Text style={{ color:'#fff' }}>{savingPrefs ? '儲存中…' : '儲存參數'}</Text>
+      </Pressable>
+      <Pressable onPress={onResetPrefs} style={{ padding:8, borderRadius:8, backgroundColor:resettingPrefs?'#555':'#455a64' }} disabled={resettingPrefs}>
+        <Text style={{ color:'#fff' }}>{resettingPrefs ? '還原中…' : '還原預設'}</Text>
+      </Pressable>
+    </View>
   </View>
 
   {/* 動作 */}
@@ -185,45 +285,76 @@ return (
   {/* 預覽 */}
   {preview && (
     <View style={{ marginTop:12 }}>
-      <Text style={{ color:C.text, fontWeight:'700', marginBottom:6 }}>預覽（第 {nextIndex} 輪）</Text>
+      <Text style={{ color:C.text, fontWeight:'700', marginBottom:6 }}>{`預覽（第 ${nextIndex} 輪）`}</Text>
       {preview.matches.length === 0 ? (
         <Text style={{ color:'#ccc' }}>沒有可組成對戰的名單</Text>
       ) : (
-        <FlatList
-          data={preview.matches}
-          keyExtractor={(_i,idx)=>'m'+idx}
-          renderItem={({ item, index }) => <MatchCard m={item} idx={index} />}
-        />
+        <View>
+          {preview.matches.map((m, index) => <MatchCard key={`m${index}`} m={m} idx={index} />)}
+        </View>
       )}
       {!!preview.waiting.length && (
         <View style={{ marginTop:10, padding:10, backgroundColor:'#222', borderRadius:10 }}>
-          <Text style={{ color:C.sub, marginBottom:4 }}>等待區（{preview.waiting.length}）</Text>
-          <Text style={{ color:'#ddd' }}>{preview.waiting.map((p:any)=>p.name).join('、 ')}</Text>
+          <Text style={{ color:C.sub, marginBottom:4 }}>{`等待區（${preview.waiting.length}）`}</Text>
+          <Text style={{ color:'#ddd' }}>{String(preview.waiting.map((p:any)=>p.name).join('、 '))}</Text>
         </View>
       )}
     </View>
   )}
 
-  {/* 歷史輪摘要 */}
+  {/* 歷史輪摘要（含狀態與操作） */}
   <View style={{ marginTop:16 }}>
-    <Text style={{ color:C.text, fontWeight:'700', marginBottom:8 }}>歷史輪（{rounds.length}）</Text>
+    <Text style={{ color:C.text, fontWeight:'700', marginBottom:8 }}>{`歷史輪（${rounds.length}）`}</Text>
     {rounds.length === 0 ? (
       <Text style={{ color:'#ccc' }}>尚無輪次</Text>
     ) : (
-      rounds.map(r => (
-        <View key={r.id} style={{ padding:10, backgroundColor:C.card, borderRadius:10, borderColor:C.border, borderWidth:1, marginBottom:10 }}>
-          <Text style={{ color:C.text, fontWeight:'700' }}>第 {r.index_no} 輪</Text>
-          {(r.matches||[]).length === 0 ? (
-            <Text style={{ color:'#ccc' }}>（無資料）</Text>
-          ) : (
-            (r.matches||[]).map((m: any, i:number) => (
-              <View key={r.id+'-'+i} style={{ marginTop:6 }}>
-                <Text style={{ color:'#90caf9' }}>場地 {m.court_no}：{(m.team_a?.players||[]).map((p:any)=>p.name).join('、')} vs {(m.team_b?.players||[]).map((p:any)=>p.name).join('、')}</Text>
+      rounds.map(r => {
+        const st = r.status || null;
+        const cs = statusChipStyle(st);
+        return (
+          <View key={r.id} style={{ padding:10, backgroundColor:C.card, borderRadius:10, borderColor:C.border, borderWidth:1, marginBottom:10 }}>
+            <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+              <Text style={{ color:C.text, fontWeight:'700' }}>{`第 ${r.index_no} 輪`}</Text>
+              <View style={{ paddingVertical:4, paddingHorizontal:10, borderRadius:14, borderWidth:1, borderColor:cs.borderColor, backgroundColor:cs.bg }}>
+                <Text style={{ color:cs.color }}>{`狀態：${statusLabel(st)}`}</Text>
               </View>
-            ))
-          )}
-        </View>
-      ))
+            </View>
+
+            {(r.matches||[]).length === 0 ? (
+              <Text style={{ color:'#ccc', marginTop:6 }}>（無資料）</Text>
+            ) : (
+              (r.matches||[]).map((m: any, i:number) => (
+                <View key={`${r.id}-${i}`} style={{ marginTop:6 }}>
+                  <Text style={{ color:'#90caf9' }}>
+                    {`場地 ${m.court_no}：`}
+                    {String((m.team_a?.players||[]).map((p:any)=>p.name).join('、'))}
+                    {'  vs  '}
+                    {String((m.team_b?.players||[]).map((p:any)=>p.name).join('、'))}
+                  </Text>
+                  <View style={{ flexDirection:'row', marginTop:6 }}>
+                    <Pressable
+                      onPress={()=>navigation.navigate('ClubScoreboard', { roundId: r.id, courtNo: m.court_no })}
+                      style={{ backgroundColor:'#1976d2', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8 }}
+                    >
+                      <Text style={{ color:'#fff' }}>啟動計分板</Text>
+                    </Pressable>
+                    {st === 'published' && (
+                      <Pressable onPress={()=>onMarkOngoing(r.id)} style={{ backgroundColor:'#2e7d32', paddingVertical:8, paddingHorizontal:12, borderRadius:8 }}>
+                        <Text style={{ color:'#fff' }}>開始本輪</Text>
+                      </Pressable>
+                    )}
+                    {st === 'ongoing' && (
+                      <Pressable onPress={()=>onMarkFinished(r.id)} style={{ backgroundColor:'#5d4037', paddingVertical:8, paddingHorizontal:12, borderRadius:8 }}>
+                        <Text style={{ color:'#fff' }}>結束本輪</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+        );
+      })
     )}
   </View>
 </ScrollView>

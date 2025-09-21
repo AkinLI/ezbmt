@@ -461,3 +461,333 @@ const { data, error } = await supa.rpc('upsert_match_members_from_event', { p_ma
 if (error) throw error;
 return (data as number) ?? 0;
 }
+
+
+// Clubs
+export async function listClubs(): Promise<Array<{ id:string; name:string; description?:string|null }>> {
+const { data, error } = await supa.from('clubs').select('id,name,description').order('created_at',{ ascending:false });
+if (error) throw error;
+return data || [];
+}
+export async function createClub(args: { name: string; description?: string }) {
+const { error } = await supa.from('clubs').insert({ name: args.name, description: args.description ?? null });
+if (error) throw error;
+}
+export async function getMyClubRoles(clubIds: string[]): Promise<Record<string,string>> {
+if (!clubIds.length) return {};
+const { data, error } = await supa.from('club_members').select('club_id,role').in('club_id', clubIds as any);
+if (error) return {};
+const map: Record<string,string> = {};
+(data||[]).forEach((r:any)=>{ map[r.club_id] = String(r.role||''); });
+return map;
+}
+
+// Buddies
+export async function listBuddies(clubId: string) {
+const { data, error } = await supa.from('buddies').select('id,name,level,gender,handedness,note').eq('club_id', clubId).order('name',{ ascending:true });
+if (error) throw error;
+return data || [];
+}
+export async function upsertBuddy(args: { clubId: string; name: string; level: number; note?: string }) {
+const { error } = await supa.from('buddies').insert({ club_id: args.clubId, name: args.name, level: args.level, note: args.note ?? null });
+if (error) throw error;
+}
+export async function deleteBuddy(id: string) {
+const { error } = await supa.from('buddies').delete().eq('id', id);
+if (error) throw error;
+}
+
+// Sessions
+export async function listSessions(clubId: string) {
+const { data, error } = await supa.from('sessions').select('id,date,courts,round_minutes').eq('club_id', clubId).order('date',{ ascending:false });
+if (error) throw error;
+return data || [];
+}
+export async function createSession(args: { clubId: string; date: string; courts: number; roundMinutes: number }) {
+const { error } = await supa.from('sessions').insert({
+club_id: args.clubId, date: args.date, courts: args.courts, round_minutes: args.roundMinutes
+});
+if (error) throw error;
+}
+
+// Attendees
+export async function listSessionAttendees(sessionId: string) {
+const { data, error } = await supa
+.from('session_attendees_view') // 方便帶出 buddy name 的 view，若無可改 join 兩次查詢
+.select('id,session_id,buddy_id,name')
+.eq('session_id', sessionId)
+.order('created_at',{ ascending:true });
+if (error) {
+// 如果尚未建立 view，退回純表
+const { data: raw } = await supa.from('session_attendees').select('id,session_id,buddy_id').eq('session_id', sessionId);
+const ids = (raw||[]).map((r:any)=>r.buddy_id);
+if (!ids.length) return [];
+const { data: bs } = await supa.from('buddies').select('id,name').in('id', ids as any);
+const nameMap = new Map((bs||[]).map((b:any)=>[b.id,b.name]));
+return (raw||[]).map((r:any)=>({ ...r, name: nameMap.get(r.buddy_id)||'' }));
+}
+return data || [];
+}
+export async function upsertSessionAttendee(args: { sessionId: string; buddyId: string }) {
+const { error } = await supa.from('session_attendees').insert({ session_id: args.sessionId, buddy_id: args.buddyId });
+if (error) throw error;
+}
+export async function removeSessionAttendee(id: string) {
+const { error } = await supa.from('session_attendees').delete().eq('id', id);
+if (error) throw error;
+}
+
+
+// ---------- Rounds / Courts ----------
+/*
+export async function listRounds(sessionId: string): Promise<Array<{ id:string; index_no:number; status?:string|null }>> {
+const { data, error } = await supa.from('session_rounds').select('id,index_no,status').eq('session_id', sessionId).order('index_no',{ ascending:true });
+if (error) throw error;
+return data || [];
+}*/
+export async function createRound(args: { sessionId: string; indexNo: number }): Promise<string> {
+const { data, error } = await supa.from('session_rounds').insert({ session_id: args.sessionId, index_no: args.indexNo }).select('id').single();
+if (error) throw error;
+return String(data?.id);
+}
+export async function listRoundCourts(roundId: string): Promise<Array<{ id:string; court_no:number; team_a_ids:string[]; team_b_ids:string[] }>> {
+const { data, error } = await supa.from('round_courts').select('id,court_no,team_a_ids,team_b_ids').eq('round_id', roundId).order('court_no',{ ascending:true });
+if (error) throw error;
+return (data || []).map((r:any)=>({
+id: r.id, court_no: Number(r.court_no||0),
+team_a_ids: Array.isArray(r.team_a_ids)? r.team_a_ids : (r.team_a_ids||[]),
+team_b_ids: Array.isArray(r.team_b_ids)? r.team_b_ids : (r.team_b_ids||[]),
+}));
+}
+export async function upsertRoundCourts(roundId: string, rows: Array<{ court_no:number; team_a_ids:string[]; team_b_ids:string[] }>) {
+for (const r of rows) {
+const { error } = await supa
+.from('round_courts')
+.upsert(
+{ round_id: roundId, court_no: r.court_no, team_a_ids: r.team_a_ids, team_b_ids: r.team_b_ids },
+{ onConflict: 'round_id,court_no' }
+);
+if (error) throw error;
+}
+}
+
+// 取該場地的隊員姓名
+export async function getRoundCourtTeams(args: { roundId: string; courtNo: number }): Promise<{ A:[string,string]; B:[string,string] }> {
+const { data, error } = await supa.from('round_courts').select('team_a_ids,team_b_ids').eq('round_id', args.roundId).eq('court_no', args.courtNo).maybeSingle();
+if (error) throw error;
+const aIds = (data?.team_a_ids || []) as string[];
+const bIds = (data?.team_b_ids || []) as string[];
+const ids = [...aIds, ...bIds].filter(Boolean);
+if (!ids.length) return { A: ['A0','A1'], B: ['B0','B1'] };
+const { data: buddies } = await supa.from('buddies').select('id,name').in('id', ids as any);
+const nameOf = (id?:string) => (buddies||[]).find(b=>b.id===id)?.name || (id ? id.slice(0,6)+'…' : '');
+return { A: [nameOf(aIds[0]), nameOf(aIds[1])], B: [nameOf(bIds[0]), nameOf(bIds[1])] };
+}
+
+// ---------- Scoreboard (round_results) ----------
+export async function getRoundResultState(args: { roundId: string; courtNo: number }): Promise<{ state_json?: string|null } | null> {
+const { data, error } = await supa.from('round_results').select('serve_state_json').eq('round_id', args.roundId).eq('court_no', args.courtNo).maybeSingle();
+if (error) throw error;
+return data ? { state_json: data.serve_state_json ? JSON.stringify(data.serve_state_json) : null } : null;
+}
+export async function upsertRoundResultState(args: { roundId: string; courtNo: number; stateJson: string }) {
+const payload = { round_id: args.roundId, court_no: args.courtNo, serve_state_json: JSON.parse(args.stateJson) };
+const { error } = await supa.from('round_results').upsert(payload, { onConflict: 'round_id,court_no' });
+if (error) throw error;
+}
+
+// 1) 角色（單一社團）
+export async function getMyClubRole(clubId: string): Promise<string|null> {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) return null;
+const { data, error } = await supa.from('club_members').select('role').eq('club_id', clubId).eq('user_id', uid).maybeSingle();
+if (error) return null;
+return data?.role ? String(data.role) : null;
+}
+
+// 2) Club Chats
+export async function listClubChatMessages(clubId: string, limit = 200) {
+const { data, error } = await supa.from('club_chats').select('*').eq('club_id', clubId).order('created_at',{ ascending:false }).limit(limit);
+if (error) throw error;
+return (data||[]).map((row:any)=>({ id: row.id, user: row.user_name || '匿名', text: row.text || '', created_at: row.created_at || new Date().toISOString() }));
+}
+export async function insertClubChatMessage(args: { clubId: string; user?: string; text: string; createdAt?: string }) {
+const { error } = await supa.from('club_chats').insert({
+club_id: args.clubId, user_name: args.user ?? null, text: args.text, created_at: args.createdAt ?? new Date().toISOString(),
+});
+if (error) throw error;
+}
+
+// 3) Club Media（沿用 media 表，owner_type 支援 'club'）
+export async function listClubMedia(clubId: string) {
+const { data, error } = await supa.from('media').select('*').eq('owner_type','club').eq('owner_id', clubId).order('created_at',{ ascending:false });
+if (error) throw error;
+return data || [];
+}
+export async function insertClubMedia(args: { clubId: string; url: string; description?: string }) {
+const { error } = await supa.from('media').insert({
+owner_type: 'club', owner_id: args.clubId, kind: 'youtube', url: args.url, description: args.description ?? null,
+});
+if (error) throw error;
+}
+
+export type SessionRow = {
+id: string;
+club_id?: string | null;
+date: string;
+start_at?: string | null;
+end_at?: string | null;
+courts: number;
+round_minutes: number;
+status: 'draft'|'ongoing'|'finished';
+created_by: string;
+created_at: string;
+};
+
+export type Attendee = {
+id: string;
+session_id: string;
+user_id?: string|null;
+buddy_id?: string|null;
+display_name: string;
+level?: number|null;
+gender?: 'M'|'F'|'U'|null;
+handedness?: 'L'|'R'|'U'|null;
+checked_in: boolean;
+arrive_at?: string|null;
+leave_at?: string|null;
+};
+
+export type RoundRow = {
+id: string;
+session_id: string;
+index_no: number;
+start_at?: string|null;
+end_at?: string|null;
+status: 'planned'|'published'|'ongoing'|'finished';
+meta?: any;
+created_at: string;
+};
+
+export type RoundMatch = {
+id: string;
+round_id: string;
+court_no: number;
+team_a: any; // { players: [{id,name,level}], ... }
+team_b: any;
+result?: any;
+created_at: string;
+};
+
+export async function insertSession(args: {
+club_id?: string|null;
+date: string; start_at?: string|null; end_at?: string|null;
+courts: number; round_minutes: number;
+status?: 'draft'|'ongoing'|'finished';
+}): Promise<string> {
+const { data, error } = await supa
+.from('sessions')
+.insert({
+club_id: args.club_id ?? null,
+date: args.date,
+start_at: args.start_at ?? null,
+end_at: args.end_at ?? null,
+courts: args.courts,
+round_minutes: args.round_minutes,
+status: args.status ?? 'draft',
+})
+.select('id')
+.single();
+if (error) throw error;
+return data!.id as string;
+}
+
+export async function listSessionsOfMe(): Promise<SessionRow[]> {
+const { data, error } = await supa
+.from('sessions')
+.select('*')
+.order('date', { ascending: false })
+.limit(200);
+if (error) throw error;
+return (data || []) as SessionRow[];
+}
+
+export async function upsertAttendee(a: Omit<Attendee,'id'|'created_at'> & { id?: string }) {
+const payload = { ...a };
+const { error } = await supa
+.from('session_attendees')
+.upsert(payload, { onConflict: 'id' });
+if (error) throw error;
+}
+
+export async function removeAttendee(id: string) {
+const { error } = await supa
+.from('session_attendees')
+.delete()
+.eq('id', id);
+if (error) throw error;
+}
+
+/** 呼叫 RPC: upsert_round */
+export async function upsertRound(session_id: string, payload: {
+index_no: number;
+start_at?: string|null;
+end_at?: string|null;
+status?: 'planned'|'published'|'ongoing'|'finished';
+matches: Array<{ court_no: number; team_a: any; team_b: any }>;
+}): Promise<string> {
+const { data, error } = await supa.rpc('upsert_round', {
+p_session_id: session_id,
+p_round: payload as any,
+});
+if (error) throw error;
+return data as string; // round_id
+}
+
+
+export async function listRounds(session_id: string): Promise<Array<RoundRow & { matches: RoundMatch[] }>> {
+// 取 rounds（不要用空字串，改用 '*' 或明確欄位）
+const { data: rounds, error: re } = await supa
+.from('session_rounds')
+.select('id, session_id, index_no, start_at, end_at, status, meta, created_at')
+.eq('session_id', session_id)
+.order('index_no', { ascending: true });
+
+if (re) throw re;
+const arr = (rounds || []) as RoundRow[];
+
+// 批次撈 matches
+const ids = arr.map(r => r.id);
+if (!ids.length) return arr.map(r => ({ ...r, matches: [] }));
+
+const { data: matches, error: me } = await supa
+.from('round_matches')
+.select('id, round_id, court_no, team_a, team_b, result, created_at')
+.in('round_id', ids as any)
+.order('court_no', { ascending: true });
+
+if (me) throw me;
+
+const map = new Map<string, RoundMatch[]>();
+(matches || []).forEach((m) => {
+const rid = (m as any).round_id as string;
+if (!map.has(rid)) map.set(rid, []);
+map.get(rid)!.push(m as RoundMatch);
+});
+
+return arr.map(r => ({ ...r, matches: map.get(r.id) || [] }));
+}
+
+
+/** 投影看板/倒數 */
+export async function listProjection(session_id: string): Promise<{
+server_time: string;
+now?: { index: number; start_at?: string|null; end_at?: string|null; matches: any[] } | null;
+next?: { index: number; planned_start_at?: string|null; matchesPreview: any[] } | null;
+}> {
+const { data, error } = await supa.rpc('list_projection', { p_session_id: session_id });
+if (error) throw error;
+return data as any;
+}
+

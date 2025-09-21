@@ -179,16 +179,17 @@ export default function QuickScoreboardScreen() {
     }
   }
 
-    function score(team: 0 | 1) {
+      function score(team: 0 | 1) {
     if (!state) return;
     const next = nextRally({ ...state }, team);
     setState(next);
     setSnap(getUiSnapshot(next));
   }
   
-  // 字級：依最短邊自動縮放
-  const bigFont = Math.max(48, Math.floor(Math.min(width, height) * 0.22));
-  const nameFont = Math.max(16, Math.floor(Math.min(width, height) * 0.055));
+  // 字級：依最短邊自動縮放；分數儘量大
+  const shortSide = Math.min(width, height);
+  const bigFont = Math.max(52, Math.floor(shortSide * 0.50)); // 放大到 30%
+  const nameFont = Math.max(16, Math.floor(shortSide * 0.06));
 
   // 顯示名字
   const homeNames = [cfg.home[0].name || '主#1', cfg.singles ? '' : (cfg.home[1].name || '主#2')];
@@ -260,29 +261,36 @@ export default function QuickScoreboardScreen() {
                 style={{
                   position: 'absolute',
                   bottom: 12,
-                  left: 12,
-                  right: 12,
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
+                  left: 0,
+                  right: 0,
                   alignItems: 'center',
                 }}
               >
-                <Seat
-                  label="右"
-                  name={nameHomeR}
-                  highlightSrv={isSrv(0, posA.right)}
-                  highlightRcv={isRcv(0, posA.right)}
-                  style={{ flexBasis: '46%', maxWidth: '46%' }}
-                />
-                {!cfg.singles && (
+                <View
+                  style={{
+                    width: '88%', // 置中且縮進，避免貼邊裁切
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
                   <Seat
-                    label="左"
-                    name={nameHomeL}
-                    highlightSrv={isSrv(0, posA.left)}
-                    highlightRcv={isRcv(0, posA.left)}
-                    style={{ flexBasis: '46%', maxWidth: '46%' }}
-                />
-                )}
+                    label="右"
+                    name={nameHomeR}
+                    highlightSrv={isSrv(0, posA.right)}
+                    highlightRcv={isRcv(0, posA.right)}
+                    style={{ flexBasis: '48%', maxWidth: '48%' }}
+                  />
+                  {!cfg.singles && (
+                    <Seat
+                      label="左"
+                      name={nameHomeL}
+                      highlightSrv={isSrv(0, posA.left)}
+                      highlightRcv={isRcv(0, posA.left)}
+                      style={{ flexBasis: '48%', maxWidth: '48%' }}
+                    />
+                  )}
+                </View>
               </View>
             </Pressable>
 
@@ -300,35 +308,42 @@ export default function QuickScoreboardScreen() {
                 style={{
                   position: 'absolute',
                   bottom: 12,
-                  left: 12,
-                  right: 12,
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
+                  left: 0,
+                  right: 0,
                   alignItems: 'center',
                 }}
               >
-                <Seat
-                  label="右"
-                  name={nameAwayR}
-                  highlightSrv={isSrv(1, posB.right)}
-                  highlightRcv={isRcv(1, posB.right)}
-                  style={{ flexBasis: '46%', maxWidth: '46%' }}
-                />
-                {!cfg.singles && (
+                <View
+                  style={{
+                    width: '88%',
+                    flexDirection: 'row',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
+                >
                   <Seat
-                    label="左"
-                    name={nameAwayL}
-                    highlightSrv={isSrv(1, posB.left)}
-                    highlightRcv={isRcv(1, posB.left)}
-                    style={{ flexBasis: '46%', maxWidth: '46%' }}
+                    label="右"
+                    name={nameAwayR}
+                    highlightSrv={isSrv(1, posB.right)}
+                    highlightRcv={isRcv(1, posB.right)}
+                    style={{ flexBasis: '48%', maxWidth: '48%' }}
                   />
-                )}
+                  {!cfg.singles && (
+                    <Seat
+                      label="左"
+                      name={nameAwayL}
+                      highlightSrv={isSrv(1, posB.left)}
+                      highlightRcv={isRcv(1, posB.left)}
+                      style={{ flexBasis: '48%', maxWidth: '48%' }}
+                    />
+                  )}
+                </View>
               </View>
             </Pressable>
           </View>
 
           {/* 返回設定 */}
-          <View style={{ position: 'absolute', right: 8, top: 8 }}>
+          <View style={{ position: 'absolute', right: 90, top: 5 }}>
             <Pressable
               onPress={() => setMode('setup')}
               style={{
@@ -564,7 +579,7 @@ function Seat({
           minHeight: 44,
           overflow: 'hidden',
         },
-        style, // 接收外部的 flexBasis/maxWidth:'46%'
+        style, // 接收外部的 flexBasis/maxWidth
       ]}
     >
       <Text

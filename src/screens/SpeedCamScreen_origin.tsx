@@ -1,25 +1,40 @@
 import React from 'react';
-import { View, Text, Pressable, Alert, Dimensions, NativeSyntheticEvent, TextInput } from 'react-native';
-import RNSpeedCamView, { type NativeSample } from '../native/SpeedCamNative';
+import { View, Text, Pressable, Alert, Dimensions } from 'react-native';
+import {
+Camera,
+useCameraDevice,
+useFrameProcessor,
+VisionCameraProxy,
+type FrameProcessorPlugin,
+} from 'react-native-vision-camera';
+import { runOnJS } from 'react-native-reanimated';
 import { insertSpeedSession, insertSpeedPoints } from '../db';
 
+type Sample = { x: number; y: number; ts: number; score: number; w?: number; h?: number };
 type Pt = { x: number; y: number };
 
 export default function SpeedCamScreen() {
-// 權限（Info.plist 已有相機權限；iOS 會自行詢問）
-const [hasPerm] = React.useState(true);
+const device = useCameraDevice('back');
+
+// 權限
+const [hasPerm, setHasPerm] = React.useState(false);
+React.useEffect(() => {
+(async () => {
+const cam = await Camera.requestCameraPermission();
+setHasPerm(cam === 'granted');
+})();
+}, []);
 
 // 即時速度（m/s）
 const [speedMs, setSpeedMs] = React.useState(0);
 const updateSpeed = React.useCallback((msInst: number) => {
-// 平滑
 setSpeedMs(prev => (prev === 0 ? msInst : prev * 0.7 + msInst * 0.3));
 }, []);
 
 // 上一筆樣本
-const lastRef = React.useRef<NativeSample | null>(null);
+const lastRef = React.useRef<Sample | null>(null);
 
-// 校正（兩點 + 換算係數）
+// 校正
 const [calibMode, setCalibMode] = React.useState(false);
 const [calibA, setCalibA] = React.useState<Pt | null>(null);
 const [calibB, setCalibB] = React.useState<Pt | null>(null);
@@ -36,15 +51,20 @@ const frameSizeRef = React.useRef<{ w: number; h: number } | null>(null);
 const [recording, setRecording] = React.useState(false);
 const recordBufRef = React.useRef<Array<{ idx: number; x: number; y: number; ts: number }>>([]);
 
-// 速度門檻（km/h，可自訂）
-const [minKmhTxt, setMinKmhTxt] = React.useState('200');
-const [maxKmhTxt, setMaxKmhTxt] = React.useState('500');
-const minKmh = Math.max(0, Number(minKmhTxt) || 0);
-const maxKmh = Math.max(minKmh, Number(maxKmhTxt) || 500);
-const thrMinMps = minKmh / 3.6;
-const thrMaxMps = maxKmh / 3.6;
+// 取得原生 Frame Processor Plugin
+const speedPlugin = React.useMemo<FrameProcessorPlugin | undefined>(() => {
+try {
+const proxy: any = VisionCameraProxy as any;
+const getter = proxy?.getFrameProcessorPlugin ?? proxy?.initFrameProcessorPlugin;
+const p = typeof getter === 'function' ? getter('STPlugin') : undefined;
+console.log('STPlugin type:', typeof p);
+return p;
+} catch {
+return undefined;
+}
+}, []);
 
-// 幀座標轉 normalized（0..1），含 aspectFill 修正
+// 座標轉幀 normalized（0..1），含 aspectFill 修正
 const toFrameNorm = React.useCallback(
 (vx: number, vy: number): Pt | null => {
 const fs = frameSizeRef.current;
@@ -65,7 +85,7 @@ if (!VW || !VH || !FW || !FH) return null;
 [viewSize],
 );
 
-// 點擊校正：畫面上點兩點
+// 校正點擊
 const onTapOverlay = (evt: any) => {
 if (!calibMode) return;
 const { locationX, locationY } = evt.nativeEvent;
@@ -85,7 +105,10 @@ setCalibMode(false);
 };
 
 // 錄製控制
-const startRecord = () => { recordBufRef.current = []; setRecording(true); };
+const startRecord = () => {
+recordBufRef.current = [];
+setRecording(true);
+};
 const stopRecordAndSave = async () => {
 setRecording(false);
 const rows = recordBufRef.current.slice();
@@ -94,7 +117,7 @@ try {
 const sid = await insertSpeedSession('camera', 'kmh');
 await insertSpeedPoints(
 sid,
-rows.map((r, i) => ({ idx: i, rx: r.x, ry: r.y, ts: Math.round(r.ts) })), // ts 為 ms
+rows.map((r, i) => ({ idx: i, rx: r.x, ry: r.y, ts: Math.round(r.ts) })), // ts 已為 ms
 );
 Alert.alert('已儲存', `共 ${rows.length} 筆！`);
 } catch (e: any) {
@@ -102,46 +125,77 @@ Alert.alert('儲存失敗', String(e?.message || e));
 }
 };
 
-// 事件樣本處理（只在已校正時才換算 m/s，並套用門檻過濾）
-const onSample = React.useCallback((e: NativeSyntheticEvent<NativeSample>) => {
-const s = e.nativeEvent;
-
-// 幀尺寸
-if (s.w && s.h) frameSizeRef.current = { w: s.w, h: s.h };
-
-const last = lastRef.current;
-if (last && metersPerUnit != null) {
-  // Δt（秒）— timestamp 皆為毫秒
-  const dtSec = (s.ts - last.ts) / 1000;
-  // 合理性過濾：過小/過大 Δt 視為無效
-  if (dtSec <= 0.005 || dtSec > 0.5) { lastRef.current = s; return; }
-
-  const du = Math.hypot(s.x - last.x, s.y - last.y);
-  const meters = du * metersPerUnit;
-  const mps = meters / dtSec;
-
-  // 速度門檻過濾（只接受 minKmh~maxKmh）
-  if (!Number.isFinite(mps) || mps <= 0) { lastRef.current = s; return; }
-  if (mps < thrMinMps || mps > thrMaxMps) { lastRef.current = s; return; }
-
-  updateSpeed(mps);
-
-  // 錄製：只在通過門檻的樣本才寫入
-  if (recording) {
-    const buf = recordBufRef.current;
-    buf.push({ idx: buf.length, x: s.x, y: s.y, ts: s.ts });
-  }
-} else {
-  // 未校正：僅更新 last，不顯示速度（或你可顯示相對速度）
-  if (recording) {
-    const buf = recordBufRef.current;
-    buf.push({ idx: buf.length, x: s.x, y: s.y, ts: s.ts });
-  }
+// JS 端樣本處理
+const onSampleCalc = React.useCallback(
+(s: Sample) => {
+// 記錄幀尺寸
+if (typeof s.w === 'number' && typeof s.h === 'number' && s.w > 0 && s.h > 0) {
+frameSizeRef.current = { w: s.w, h: s.h };
 }
 
-lastRef.current = s;
-}, [metersPerUnit, recording, updateSpeed, thrMinMps, thrMaxMps]);
+  const last = lastRef.current;
+  if (last && metersPerUnit != null) {
+    // 重要：timestamp 為毫秒 → 轉秒
+    const dtSec = (s.ts - last.ts) / 1000;
+    if (dtSec > 0) {
+      const du = Math.hypot(s.x - last.x, s.y - last.y);
+      const meters = du * metersPerUnit;
+      const mps = meters / dtSec;
+      updateSpeed(mps);
+    }
+  }
+  lastRef.current = s;
 
+  if (recording) {
+    const buf = recordBufRef.current;
+    buf.push({ idx: buf.length, x: s.x, y: s.y, ts: s.ts });
+  }
+},
+[metersPerUnit, recording, updateSpeed],
+);
+
+// frameProcessor（以毫秒節流）
+const frameProcessor = useFrameProcessor(
+(frame) => {
+'worklet';
+
+  // ~30 FPS 節流（ms）
+  // @ts-ignore
+  const last = globalThis.__lastFP || 0;
+  const dtMs = frame.timestamp - last; // VisionCamera 為 ms
+  if (dtMs < 33) return;
+  // @ts-ignore
+  globalThis.__lastFP = frame.timestamp;
+
+  // 取得插件
+  // @ts-ignore
+  const p = speedPlugin as any;
+  if (!p) return;
+
+  // 兩種呼叫方式
+  // @ts-ignore
+  const res = p.call ? p.call(frame, {}) : p(frame, {});
+  if (!res) return;
+
+  const s = {
+    x: res.x as number,
+    y: res.y as number,
+    ts: res.ts as number,   // ms
+    score: res.score as number,
+    w: res.w as number,
+    h: res.h as number,
+  };
+
+  // 門檻先放低
+  if (s.score < 3) return;
+
+  runOnJS(onSampleCalc)(s);
+},
+[onSampleCalc, speedPlugin],
+);
+
+if (!device)
+return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><Text>找不到可用相機</Text></View>;
 if (!hasPerm)
 return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}><Text>尚未取得相機權限</Text></View>;
 
@@ -149,11 +203,12 @@ const kmh = speedMs * 3.6;
 
 return (
 <View style={{ flex: 1 }}>
-{/* 原生相機預覽 + 即時樣本 */}
-<RNSpeedCamView
+<Camera
 style={{ flex: 1 }}
-isActive={true}
-onSample={onSample}
+device={device}
+isActive
+pixelFormat="yuv"
+frameProcessor={frameProcessor}
 />
 
   {/* 透明點擊層（校正） */}
@@ -170,35 +225,13 @@ onSample={onSample}
 
   {/* UI 面板 */}
   <View style={{ position: 'absolute', left: 10, right: 10, bottom: 10, backgroundColor: 'rgba(0,0,0,0.55)', borderRadius: 12, padding: 12 }}>
-    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>
-      {metersPerUnit ? `${kmh.toFixed(1)} km/h (${speedMs.toFixed(2)} m/s)` : '尚未校正'}
+    <Text style={{ color: '#fff', fontSize: 18, fontWeight: '700' }}>{kmh.toFixed(1)} km/h ({speedMs.toFixed(2)} m/s)</Text>
+    <Text style={{ color: '#fff', marginTop: 4 }}>
+      校正：{metersPerUnit ? `${metersPerUnit.toFixed(3)} m / normalized-unit` : '尚未校正'}
     </Text>
 
-    {/* 門檻設定（km/h） */}
-    <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
-      <Text style={{ color: '#fff', marginRight: 8 }}>門檻：</Text>
-      <TextInput
-        value={minKmhTxt}
-        onChangeText={setMinKmhTxt}
-        keyboardType="numeric"
-        placeholder="min km/h"
-        placeholderTextColor="#aaa"
-        style={{ width: 80, height: 36, borderWidth: 1, borderColor: '#777', borderRadius: 6, color: '#fff', paddingHorizontal: 8, marginRight: 6 }}
-      />
-      <Text style={{ color: '#fff', marginHorizontal: 4 }}>~</Text>
-      <TextInput
-        value={maxKmhTxt}
-        onChangeText={setMaxKmhTxt}
-        keyboardType="numeric"
-        placeholder="max km/h"
-        placeholderTextColor="#aaa"
-        style={{ width: 80, height: 36, borderWidth: 1, borderColor: '#777', borderRadius: 6, color: '#fff', paddingHorizontal: 8 }}
-      />
-      <Text style={{ color: '#bbb', marginLeft: 8 }}>{`（預設 200~500）`}</Text>
-    </View>
-
     <View style={{ flexDirection: 'row', marginTop: 8, flexWrap: 'wrap' }}>
-      <Pressable onPress={() => { setCalibMode(v => !v); setCalibA(null); setCalibB(null); }}
+      <Pressable onPress={() => { setCalibMode((v) => !v); setCalibA(null); setCalibB(null); }}
         style={{ paddingVertical: 6, paddingHorizontal: 10, backgroundColor: '#1976d2', borderRadius: 8, marginRight: 8, marginBottom: 8 }}>
         <Text style={{ color: '#fff' }}>{calibMode ? '退出校正' : '校正模式'}</Text>
       </Pressable>
@@ -236,7 +269,7 @@ onSample={onSample}
 
     {calibMode && (
       <Text style={{ color: '#fff', marginTop: 6 }}>
-        校正說明：在預覽畫面上點兩點（如球場左右邊線），再點選 6.1m 或 5.18m。
+        校正說明：在預覽畫面上點兩點（例如球場左右邊線），再點選 6.1m 或 5.18m。
       </Text>
     )}
   </View>

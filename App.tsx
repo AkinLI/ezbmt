@@ -37,6 +37,7 @@ new Set([
 'SpeedCam', // 測速
 'Analysis', // 分析
 'Replay', // 回放
+'QuickScoreboard',//快速計分板
 ]),
 []
 );

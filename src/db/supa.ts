@@ -969,4 +969,29 @@ if (error) throw error;
 return (data || []) as any;
 }
 
+export async function upsertRoundResultOutcome(args: {
+roundId: string;
+courtNo: number;
+serveStateJson?: string;           // 序列化後的 MatchState（可選）
+scoreHome?: number | null;
+scoreAway?: number | null;
+winnerTeam?: 0 | 1 | null;        // 0 主 / 1 客 / null 未定
+finishedAt?: string | null;        // ISO time
+}): Promise<void> {
+const payload: any = {
+round_id: args.roundId,
+court_no: args.courtNo,
+};
+if (args.serveStateJson != null) payload.serve_state_json = JSON.parse(args.serveStateJson);
+if (args.scoreHome != null) payload.score_home = args.scoreHome;
+if (args.scoreAway != null) payload.score_away = args.scoreAway;
+if (args.winnerTeam != null) payload.winner_team = args.winnerTeam;
+if (args.finishedAt != null) payload.finished_at = args.finishedAt;
+
+const { error } = await supa
+.from('round_results')
+.upsert(payload, { onConflict: 'round_id,court_no' });
+if (error) throw error;
+}
+
 

@@ -44,6 +44,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+<key>NSLocalNetworkUsageDescription</key>
+<string>需要使用相機以作為測速畫面</string>
 <key>NSCameraUsageDescription</key> 
 <string>需要使用相機以作為測速畫面</string> 
 <key>NSMicrophoneUsageDescription</key> 

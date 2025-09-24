@@ -20,8 +20,11 @@ MediaStream,
 const C = { bg: '#111', card: '#1e1e1e', border: '#333', text: '#fff', sub: '#bbb', btn: '#1976d2', warn: '#d32f2f' };
 const ICE_SERVERS = {
 iceServers: [
-{ urls: ['stun:stun.l.google.com:19302'] },
-// 建議配置 TURN 伺服器
+{ urls: ['stun:stun.l.google.com:19302',
+'stun:stun1.l.google.com:19302',
+'stun:stun2.l.google.com:19302',
+'stun:stun3.l.google.com:19302',
+'stun:stun4.l.google.com:19302'] },
 ],
 };
 
@@ -40,17 +43,13 @@ const pcRef = React.useRef<RTCPeerConnection | null>(null);
 const signalRef = React.useRef<ReturnType<typeof openSignalChannel> | null>(null);
 
 React.useEffect(() => {
-// 觀看中（連線中/已連線）保持常亮
 const on = connecting || connected || !!remoteStream;
 try { if (on) KeepAwake.activate(); else KeepAwake.deactivate(); } catch {}
 return () => { try { KeepAwake.deactivate(); } catch {} };
 }, [connecting, connected, remoteStream]);
 
 React.useEffect(() => {
-return () => {
-cleanup();
-try { KeepAwake.deactivate(); } catch {}
-};
+return () => { cleanup(); try { KeepAwake.deactivate(); } catch {} };
 }, []);
 
 function cleanup() {
@@ -71,15 +70,24 @@ try {
 const pc = new RTCPeerConnection(ICE_SERVERS);
 pcRef.current = pc;
 
-  (pc as any).onicecandidate = (ev: any) => {
-    if (ev?.candidate) {
-      signalRef.current?.send({ kind: 'ice', from: 'viewer', candidate: ev.candidate });
-    }
+  // Debug logs
+  (pc as any).oniceconnectionstatechange = () => {
+    console.log('[VIEWER][ICE] state =', pc.iceConnectionState);
   };
   (pc as any).onconnectionstatechange = () => {
-    const s = pc.connectionState;
-    if (s === 'connected') setConnected(true);
-    if (s === 'failed' || s === 'disconnected' || s === 'closed') setConnected(false);
+    console.log('[VIEWER][PC] state =', pc.connectionState);
+  };
+  (pc as any).onicegatheringstatechange = () => {
+    console.log('[VIEWER][ICE] gathering =', pc.iceGatheringState);
+  };
+
+  (pc as any).onicecandidate = (ev: any) => {
+    if (ev?.candidate) {
+      console.log('[VIEWER][ICE] send cand');
+      signalRef.current?.send({ kind: 'ice', from: 'viewer', candidate: ev.candidate });
+    } else {
+      console.log('[VIEWER][ICE] cand = null (completed)');
+    }
   };
   (pc as any).ontrack = (ev: any) => {
     let s = ev?.streams && ev.streams[0];
@@ -101,15 +109,20 @@ pcRef.current = pc;
     try {
       if (!pcRef.current) return;
       if (msg.kind === 'answer' && msg.sdp) {
+        console.log('[VIEWER] recv answer');
         await pcRef.current.setRemoteDescription(new RTCSessionDescription(msg.sdp));
       } else if (msg.kind === 'ice' && msg.candidate) {
+        console.log('[VIEWER] recv cand');
         try { await pcRef.current.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch {}
       }
-    } catch {}
+    } catch (e) {
+      console.log('[VIEWER] signal error', e);
+    }
   });
 
   const offer = await pc.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
   await pc.setLocalDescription(offer);
+  console.log('[VIEWER] send offer');
   await signal.send({ kind: 'offer', from: 'viewer', sdp: offer });
 } catch (e: any) {
   Alert.alert('連線失敗', String(e?.message || e));

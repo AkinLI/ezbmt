@@ -48,9 +48,11 @@ last_seen_at?: string | null;
 
 const ICE_SERVERS = {
 iceServers: [
-{ urls: ['stun:stun.l.google.com:19302'] },
-// 建議配置自己的 TURN 伺服器以提高連線成功率
-// { urls: 'turn:YOUR_TURN_HOST:3478', username: 'user', credential: 'pass' },
+{ urls: ['stun:stun.l.google.com:19302',
+'stun:stun1.l.google.com:19302',
+'stun:stun2.l.google.com:19302',
+'stun:stun3.l.google.com:19302',
+'stun:stun4.l.google.com:19302'] },
 ],
 };
 
@@ -88,10 +90,11 @@ const u = data?.user?.id;
 if (!u) throw new Error('no_login');
 if (!active) return;
 setUid(u);
-const id = await getDeviceId();
-if (!active) return;
-setDeviceId(id);
-setMyName(`Cam-${getPlatformTag()}-${id.slice(0, 4)}`);
+
+    const id = await getDeviceId();
+    if (!active) return;
+    setDeviceId(id);
+    setMyName(`Cam-${getPlatformTag()}-${id.slice(0, 4)}`);
 
     // 自動廣播偏好：若為開則自動啟動
     try {
@@ -118,15 +121,13 @@ return () => {
 };
 }, []);
 
-// 廣播中 → 保持常亮；關閉或離開 → 解除
+// 廣播中 → 常亮
 React.useEffect(() => {
 try {
 if (advertise) KeepAwake.activate();
 else KeepAwake.deactivate();
 } catch {}
-return () => {
-try { KeepAwake.deactivate(); } catch {}
-};
+return () => { try { KeepAwake.deactivate(); } catch {} };
 }, [advertise]);
 
 async function ensureAVPermission() {
@@ -137,8 +138,7 @@ if (cam !== PermissionsAndroid.RESULTS.GRANTED || mic !== PermissionsAndroid.RES
 throw new Error('CAMERA/MIC permission denied');
 }
 }
-// iOS 需於 Info.plist 設定：
-// NSCameraUsageDescription / NSMicrophoneUsageDescription
+// iOS: Info.plist 需有相機/麥克風描述，首次會彈窗
 }
 
 async function reload(ownerId?: string) {
@@ -165,6 +165,7 @@ function stopHeartbeat() {
 try { hbRef.current?.(); } catch {}
 hbRef.current = null;
 }
+
 async function startHeartbeat() {
 stopHeartbeat();
 const tick = async () => {
@@ -189,55 +190,66 @@ async function startBroadcast() {
 try {
 await ensureAVPermission();
 
-  // 1) 開 local stream
+  // 1) local stream
   const stream = await mediaDevices.getUserMedia({
     audio: true,
-    video: {
-      facingMode: 'environment',
-      frameRate: 30,
-      width: 640,
-      height: 480,
-    },
+    video: { facingMode: 'environment', frameRate: 30, width: 640, height: 480 },
   });
   localStreamRef.current = stream;
   setPreviewOn(true);
 
-  // 2) 建立 PeerConnection
+  // 2) RTCPeerConnection
   const pc = new RTCPeerConnection(ICE_SERVERS);
   pcRef.current = pc;
+
+  // Debug logs
+  (pc as any).oniceconnectionstatechange = () => {
+    console.log('[BROADCAST][ICE] state =', pc.iceConnectionState);
+  };
+  (pc as any).onconnectionstatechange = () => {
+    console.log('[BROADCAST][PC] state =', pc.connectionState);
+  };
+  (pc as any).onicegatheringstatechange = () => {
+    console.log('[BROADCAST][ICE] gathering =', pc.iceGatheringState);
+  };
 
   // 3) 加入 tracks
   stream.getTracks().forEach((t: any) => pc.addTrack(t, stream));
 
-  // 4) ICE → viewer
+  // 4) Signaling
   const signal = openSignalChannel(deviceId);
   signalRef.current = signal;
 
   (pc as any).onicecandidate = (ev: any) => {
     if (ev?.candidate) {
+      console.log('[BROADCAST][ICE] send cand');
       signal.send({ kind: 'ice', from: deviceId, candidate: ev.candidate }).catch(() => {});
+    } else {
+      console.log('[BROADCAST][ICE] cand = null (completed)');
     }
   };
 
-  // 5) 等待 viewer offer、回覆 answer；收 viewer 的 ICE
   await signal.subscribe(async (msg) => {
     try {
       if (!pcRef.current) return;
-      if (!msg || msg.from === deviceId) return;
       if (msg.kind === 'offer' && msg.sdp) {
+        console.log('[BROADCAST] recv offer');
         await pcRef.current.setRemoteDescription(new RTCSessionDescription(msg.sdp));
         const answer = await pcRef.current.createAnswer();
         await pcRef.current.setLocalDescription(answer);
+        console.log('[BROADCAST] send answer');
         await signal.send({ kind: 'answer', from: deviceId, sdp: answer });
       } else if (msg.kind === 'ice' && msg.candidate) {
+        console.log('[BROADCAST] recv cand');
         try { await pcRef.current.addIceCandidate(new RTCIceCandidate(msg.candidate)); } catch {}
       }
-    } catch {}
+    } catch (e) {
+      console.log('[BROADCAST] signal error', e);
+    }
   });
 } catch (e: any) {
   Alert.alert('串流啟動失敗', String(e?.message || e));
   stopBroadcast();
-  // 自動廣播失敗則關閉偏好，避免下次無限嘗試
   try { await AsyncStorage.setItem(AUTO_KEY, '0'); } catch {}
   setAdvertise(false);
 }
@@ -256,7 +268,6 @@ localStreamRef.current = null;
 setPreviewOn(false);
 }
 
-// on：開心跳+廣播並記住；off：停心跳+離線並記住
 async function toggleAdvertise(on: boolean) {
 setAdvertise(on);
 try { await AsyncStorage.setItem(AUTO_KEY, on ? '1' : '0'); } catch {}
@@ -356,14 +367,12 @@ return (
 WEB CAM（我的裝置）
 </Text>
 
-  {/* 廣播預覽（可選） */}
   {previewOn && localStreamRef.current ? (
     <View style={{ height: 220, marginBottom: 10, borderRadius: 8, overflow: 'hidden', borderWidth: 1, borderColor: C.border }}>
       <RTCView streamURL={localStreamRef.current.toURL()} mirror={false} style={{ flex: 1, backgroundColor: '#000' }} objectFit="cover" />
     </View>
   ) : null}
 
-  {/* 本裝置設定 */}
   <View style={{ padding: 10, borderWidth: 1, borderColor: C.border, backgroundColor: C.card, borderRadius: 10, marginBottom: 12 }}>
     <Text style={{ color: '#fff', fontWeight: '700' }}>這台裝置</Text>
     <Text style={{ color: '#bbb', marginTop: 6 }}>Device ID：{deviceId}</Text>
@@ -391,13 +400,10 @@ WEB CAM（我的裝置）
     </View>
 
     <View style={{ marginTop: 8 }}>
-      <Text style={{ color: '#ffecb3' }}>
-        注意：iOS/Android 都無法在背景或螢幕關閉時持續使用相機。請讓此畫面保持在前景；已啟用「螢幕常亮」避免裝置自動鎖定。
-      </Text>
+      <Text style={{ color: '#ffecb3' }}>注意：iOS/Android 都無法在背景或螢幕關閉時持續使用相機。請讓此畫面保持在前景；已啟用「螢幕常亮」避免裝置自動鎖定。</Text>
     </View>
   </View>
 
-  {/* 我的 cams 清單 */}
   <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
     <Text style={{ color: '#fff', fontWeight: '700' }}>我的 cams</Text>
     <Pressable onPress={() => reload()} style={{ marginLeft: 'auto', paddingVertical: 6, paddingHorizontal: 10, backgroundColor: C.btn, borderRadius: 8 }}>

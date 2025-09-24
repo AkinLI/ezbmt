@@ -11,22 +11,33 @@ const clubId = route.params?.clubId as string;
 const sessionId = route.params?.sessionId as string;
 
 const [buddies, setBuddies] = React.useState<Array<{ id:string; name:string; level:number }>>([]);
-const [attendees, setAttendees] = React.useState<Array<{ id:string; buddy_id:string; name:string }>>([]);
+const [attendees, setAttendees] = React.useState<Array<{ id:string; buddy_id:string; display_name:string }>>([]);
 const [search, setSearch] = React.useState('');
 
 const load = React.useCallback(async ()=>{
 try {
 const [bs, as] = await Promise.all([listBuddies(clubId), listSessionAttendees(sessionId)]);
 setBuddies(bs);
-setAttendees(as);
+
+  const list = (as || []).map((r:any)=> ({
+    id: String(r.id),
+    buddy_id: String(r.buddy_id || ''),
+    display_name: String(r.display_name || r.name || ''),
+  }));
+  setAttendees(list);
 } catch(e:any){ Alert.alert('載入失敗', String(e?.message||e)); }
 }, [clubId, sessionId]);
+
 React.useEffect(()=>{ load(); }, [load]);
 
 const add = async (buddyId:string)=>{
-try { await upsertSessionAttendee({ sessionId, buddyId }); load(); }
-catch(e:any){ Alert.alert('加入失敗', String(e?.message||e)); }
+try {
+// 不要傳 checked_in；你的表沒有此欄，因此只傳必要欄位
+await upsertSessionAttendee({ session_id: sessionId, buddy_id: buddyId } as any);
+load();
+} catch(e:any){ Alert.alert('加入失敗', String(e?.message||e)); }
 };
+
 const remove = async (attId:string)=>{
 try { await removeSessionAttendee(attId); load(); }
 catch(e:any){ Alert.alert('移除失敗', String(e?.message||e)); }
@@ -37,7 +48,7 @@ const filtered = buddies.filter(b=> !picked.has(b.id) && (search.trim()? b.name.
 
 const AttRow = ({ item }: any) => (
 <View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:8, marginBottom:8, flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
-<Text style={{ color:C.text }}>{item.name}</Text>
+<Text style={{ color:C.text }}>{item.display_name}</Text>
 <Pressable onPress={()=>remove(item.id)} style={{ backgroundColor:C.warn, paddingVertical:6, paddingHorizontal:10, borderRadius:8 }}>
 <Text style={{ color:'#fff' }}>移除</Text>
 </Pressable>

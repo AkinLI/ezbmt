@@ -167,10 +167,21 @@ checked_in: true, // 表沒有此欄，一律視為已報到
 
 
 export async function upsertAttendee(a: Omit<Attendee,'id'|'created_at'> & { id?: string }) {
-const payload = { ...a };
-const { error } = await supa
-.from('session_attendees')
-.upsert(payload, { onConflict: 'id' });
+// 僅寫入實際存在於 table 的欄位（避免 checked_in）
+const payload: any = {};
+if ((a as any).id) payload.id = (a as any).id;
+if ((a as any).session_id) payload.session_id = (a as any).session_id;
+if ((a as any).buddy_id) payload.buddy_id = (a as any).buddy_id;
+if ((a as any).user_id) payload.user_id = (a as any).user_id;
+
+if (payload.id) {
+const { error } = await supa.from('session_attendees').upsert(payload, { onConflict: 'id' });
+if (error) throw error;
+return;
+}
+
+// 無 id → 插入一筆（避免使用不存在的 onConflict 鍵）
+const { error } = await supa.from('session_attendees').insert(payload);
 if (error) throw error;
 }
 
@@ -251,5 +262,43 @@ const { error } = await supa
 .from('session_rounds')
 .update({ status })
 .eq('id', roundId);
+if (error) throw error;
+}
+
+export async function listSignups(sessionId: string): Promise<Array<{ id:string; user_id:string; name?:string|null; email?:string|null; created_at:string }>> {
+const { data, error } = await supa
+.from('sessions_signups')
+.select('id,user_id,created_at')
+.eq('session_id', sessionId)
+.order('created_at', { ascending: false });
+if (error) throw error;
+const rows = (data || []) as Array<{ id:string; user_id:string; created_at:string }>;
+const ids = Array.from(new Set(rows.map(r => r.user_id))).filter(Boolean);
+let meta: Record<string, { name?: string|null; email?: string|null }> = {};
+if (ids.length) {
+const { data: prof } = await supa.from('profiles').select('id,name,email').in('id', ids as any);
+(prof || []).forEach((p:any) => { meta[p.id] = { name: p?.name || null, email: p?.email || null }; });
+}
+return rows.map(r => ({ id:r.id, user_id:r.user_id, created_at:r.created_at, name: meta[r.user_id]?.name || null, email: meta[r.user_id]?.email || null }));
+}
+
+export async function signupSession(sessionId: string): Promise<void> {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+const { error } = await supa.from('sessions_signups').insert({ session_id: sessionId, user_id: uid });
+if (error) throw error;
+}
+
+export async function cancelSignup(sessionId: string): Promise<void> {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+const { error } = await supa.from('sessions_signups').delete().eq('session_id', sessionId).eq('user_id', uid);
+if (error) throw error;
+}
+
+export async function deleteSignup(signupId: string): Promise<void> {
+const { error } = await supa.from('sessions_signups').delete().eq('id', signupId);
 if (error) throw error;
 }

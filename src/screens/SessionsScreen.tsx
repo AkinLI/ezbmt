@@ -3,7 +3,7 @@ import { View, Text, FlatList, TextInput, Pressable, Alert } from 'react-native'
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { listSessions, createSession } from '../db';
 
-const C = { bg:'#111', card:'#222', text:'#fff', sub:'#bbb', border:'#333', primary:'#1976d2', btn:'#1976d2' };
+const C = { bg:'#111', card:'#1e1e1e', text:'#fff', sub:'#bbb', border:'#333', primary:'#1976d2', btn:'#1976d2' };
 
 export default function SessionsScreen() {
 const route = useRoute<any>();
@@ -44,7 +44,6 @@ style={{ backgroundColor:C.btn, paddingVertical:8, paddingHorizontal:12, borderR
 <Text style={{ color:'#fff' }}>報到名單</Text>
 </Pressable>
 
-    {/* 新增：進階排點（pairRound） */}
     <Pressable
       onPress={()=>nav.navigate('ClubPairing', { sessionId: item.id })}
       style={{ backgroundColor:'#00695c', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
@@ -52,12 +51,26 @@ style={{ backgroundColor:C.btn, paddingVertical:8, paddingHorizontal:12, borderR
       <Text style={{ color:'#fff' }}>排點（進階）</Text>
     </Pressable>
 
-    {/* 新增：看板（即時板/下一輪倒數） */}
     <Pressable
       onPress={()=>nav.navigate('ClubBoard', { sessionId: item.id })}
       style={{ backgroundColor:'#5d4037', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
     >
       <Text style={{ color:'#fff' }}>看板</Text>
+    </Pressable>
+
+    <Pressable
+      onPress={()=>nav.navigate('ClubBoardAudience', { sessionId: item.id })}
+      style={{ backgroundColor:'#455a64', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+    >
+      <Text style={{ color:'#fff' }}>看板（唯讀）</Text>
+    </Pressable>
+
+    {/* 新增：RSVP 管理入口 */}
+    <Pressable
+      onPress={()=>nav.navigate('SessionSignups', { sessionId: item.id, clubId })}
+      style={{ backgroundColor:'#7b1fa2', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+    >
+      <Text style={{ color:'#fff' }}>報名/候補</Text>
     </Pressable>
   </View>
 </View>
@@ -90,3 +103,4 @@ style={{ borderWidth:1, borderColor:'#444', borderRadius:8, paddingHorizontal:10
 </View>
 );
 }
+

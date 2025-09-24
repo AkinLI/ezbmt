@@ -1,7 +1,7 @@
 import { BACKEND } from '../lib/backend';
 
 // SQLite 版本
-import * as sqliteDao from './sqlite'; // 你原本的 index.ts 內容請搬到 src/db/sqlite.ts 保留
+import * as sqliteDao from './sqlite';
 // Supabase 版本
 import * as supaDao from './supa';
 
@@ -13,16 +13,14 @@ throw new Error('joinEventByCode not implemented for current backend');
 });
 
 export { enqueueSync, listSyncQueue, removeSyncItem, bumpSyncRetry } from './sqlite';
-// 逐一 re-export（與既有函式一致）
+
+// Events
 export const insertEvent = dao.insertEvent;
 export const listEvents = dao.listEvents;
 
 export const importEventMembersToMatch = (supaDao as any).importEventMembersToMatch;
-// 新增：檢查及刪除場次
 export const hasMatchRallies = (dao as any).hasMatchRallies;
 export const deleteMatch = (dao as any).deleteMatch;
-
-// 新增：檢查及刪除賽事
 export const hasEventMatches = (dao as any).hasEventMatches;
 export const deleteEvent = (dao as any).deleteEvent;
 
@@ -73,6 +71,7 @@ export const deleteMatchMember = (dao as any).deleteMatchMember;
 export const inviteEventMemberByEmail = (dao as any).inviteEventMemberByEmail;
 export const setEventOwnerRPC = (dao as any).setEventOwnerRPC;
 
+// Speed (SQLite)
 export const insertSpeedSession = (sqliteDao as any).insertSpeedSession;
 export const insertSpeedPoints = (sqliteDao as any).insertSpeedPoints;
 export const listSpeedSessions = (sqliteDao as any).listSpeedSessions;
@@ -93,10 +92,10 @@ export const deleteBuddy = (supaDao as any).deleteBuddy;
 export const listSessions = (supaDao as any).listSessions;
 export const createSession = (supaDao as any).createSession;
 
-// Session Attendees
+// Session Attendees（修正對應）
 export const listSessionAttendees = (supaDao as any).listSessionAttendees;
-export const upsertSessionAttendee = (supaDao as any).upsertSessionAttendee;
-export const removeSessionAttendee = (supaDao as any).removeSessionAttendee;
+export const upsertSessionAttendee = (supaDao as any).upsertAttendee;
+export const removeSessionAttendee = (supaDao as any).removeAttendee;
 
 // Rounds / Courts
 export const listRounds = (supaDao as any).listRounds;
@@ -108,6 +107,7 @@ export const getRoundCourtTeams = (supaDao as any).getRoundCourtTeams;
 // Scoreboard
 export const getRoundResultState = (supaDao as any).getRoundResultState;
 export const upsertRoundResultState = (supaDao as any).upsertRoundResultState;
+export const upsertRoundResultOutcome = (supaDao as any).upsertRoundResultOutcome;  // <--- 新增
 
 // Club roles
 export const getMyClubRole = (supaDao as any).getMyClubRole;
@@ -120,23 +120,21 @@ export const insertClubChatMessage = (supaDao as any).insertClubChatMessage;
 export const listClubMedia = (supaDao as any).listClubMedia;
 export const insertClubMedia = (supaDao as any).insertClubMedia;
 
-
+// My events (supabase or sqlite fallback)
 export async function listMyEvents() {
 if (BACKEND === 'supabase' && (supaDao as any).listMyEvents) {
 return supaDao.listMyEvents();
 }
-// 非 supabase 模式，用原本本地 events
 const rows = await sqliteDao.listEvents();
-return rows; // [{id,name}]
+return rows;
 }
 
 export async function createEventRPC(args: { name: string; level?: string; venue?: string; start_at?: string; end_at?: string; join_code?: string }) {
 if (BACKEND === 'supabase' && (supaDao as any).createEventRPC) {
 return supaDao.createEventRPC(args);
 }
-// 本地 fallback：直接插入 SQLite 事件
 const id = Math.random().toString(36).slice(2);
-await sqliteDao.insertEvent({ id, name: args.name });
+await sqliteDao.insertEvent({ id, name: args.name } as any);
 return id;
 }
 
@@ -144,27 +142,23 @@ export async function createMatchRPC(args: { event_id: string; type: string; cou
 if (BACKEND === 'supabase' && (supaDao as any).createMatchRPC) {
 return supaDao.createMatchRPC(args);
 }
-// 本地 SQLite 後援
 const id = Math.random().toString(36).slice(2);
-await sqliteDao.insertMatch({ id, event_id: args.event_id, type: args.type, court_no: args.courtNo ?? undefined });
+await sqliteDao.insertMatch({ id, event_id: args.event_id, type: args.type, court_no: args.courtNo ?? undefined } as any);
 return id;
 }
 
+export * from './supa_club';
 
-export {
-insertSession,
-listSessionsOfMe,
-upsertAttendee,
-removeAttendee,
-upsertRound,
-listProjection,
-setRoundStatus,
-} from './supa_club';
-
-export const listClubMembers = (supaDao as any).listClubMembers; 
-export const upsertClubMember = (supaDao as any).upsertClubMember; 
-export const deleteClubMember = (supaDao as any).deleteClubMember; 
+export const listClubMembers = (supaDao as any).listClubMembers;
+export const upsertClubMember = (supaDao as any).upsertClubMember;
+export const deleteClubMember = (supaDao as any).deleteClubMember;
 export const inviteClubMemberByEmail = (supaDao as any).inviteClubMemberByEmail;
 
 export const getSession = (supaDao as any).getSession;
 export const listMyInviteContactsWithNames = (supaDao as any).listMyInviteContactsWithNames;
+
+// RSVPs
+//export const listSignups = (supaDao as any).listSignups;
+//export const signupSession = (supaDao as any).signupSession;
+//export const cancelSignup = (supaDao as any).cancelSignup;
+//export const deleteSignup = (supaDao as any).deleteSignup;

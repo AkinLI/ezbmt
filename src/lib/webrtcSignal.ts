@@ -7,20 +7,42 @@ export type SignalMessage =
 
 export function openSignalChannel(camDeviceId: string) {
 const topic = `webrtc:cam:${camDeviceId}`;
-// 若你的 supabase-js 版本支援 ack 設定可保留 config，否則可用最簡化版本：
-const channel = supa.channel(topic);
+const channel = supa.channel(topic, { config: { broadcast: { ack: true } } });
 
-function subscribe(onMessage: (msg: SignalMessage) => void) {
+let subscribed = false;
+
+function subscribe(onMessage: (msg: SignalMessage) => void): Promise<void> {
+return new Promise<void>((resolve) => {
 channel.on('broadcast', { event: 'signal' }, (payload: any) => {
 const msg = payload?.payload as SignalMessage;
 if (msg && typeof msg === 'object' && 'kind' in msg) {
 onMessage(msg);
 }
 });
-return channel.subscribe();
+
+  channel.subscribe((status: string) => {
+    if (status === 'SUBSCRIBED') {
+      subscribed = true;
+      resolve();
+    }
+  });
+});
+}
+
+async function ensureSubscribed() {
+if (subscribed) return;
+await new Promise<void>((resolve) => {
+channel.subscribe((status: string) => {
+if (status === 'SUBSCRIBED') {
+subscribed = true;
+resolve();
+}
+});
+});
 }
 
 async function send(msg: SignalMessage): Promise<void> {
+await ensureSubscribed();
 try {
 await channel.send({ type: 'broadcast', event: 'signal', payload: msg });
 } catch {

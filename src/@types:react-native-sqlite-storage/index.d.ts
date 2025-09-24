@@ -30,3 +30,5 @@ export as namespace SQLite;
 export { SQLiteDatabase };
 export default SQLiteDefault;
 }
+
+

@@ -957,4 +957,16 @@ if (error) throw error;
 return (data || null) as any;
 }
 
-        
+export async function listMyInviteContactsWithNames(): Promise<Array<{
+email: string;
+name?: string | null;
+last_role: string;
+total_count?: number | null;
+last_invited_at?: string | null;
+}>> {
+const { data, error } = await supa.rpc('list_my_invite_contacts');
+if (error) throw error;
+return (data || []) as any;
+}
+
+

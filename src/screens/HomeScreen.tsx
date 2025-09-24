@@ -87,13 +87,16 @@ style={{ width: '86%', height: 90 }}
       <Button title="社團管理" color={C.accent} onPress={() => navigation.navigate('Clubs')} />
       <Button title="個人設定" color={C.gray} onPress={() => navigation.navigate('Profile')} />
       <Button title="快速計分板" color="#6a1b9a" onPress={() => navigation.navigate('QuickScoreboard')} />
-      {/* 僅最大管理者顯示「測速」「基本設定」 */}
-      {isAdmin && (
-        <>
-          <Button title="測速" color={C.dark} onPress={() => navigation.navigate('SpeedCam')} />
-          <Button title="基本設定" color={C.Setting} onPress={() => navigation.navigate('Settings')} />
-        </>
-      )}
+
+      {/* 僅最大管理者顯示管理項目 */}
+{isAdmin && (
+<>
+<Button title="社群管理" color="#c2185b" onPress={() => navigation.navigate('AdminModeration')} />
+<Button title="TEST" color="#0288d1" onPress={() => navigation.navigate('WebCam')} />
+<Button title="測速" color={C.dark} onPress={() => navigation.navigate('SpeedCam')} />
+<Button title="基本設定" color={C.Setting} onPress={() => navigation.navigate('Settings')} />
+</>
+)}
 
       <Button
         title="登出"

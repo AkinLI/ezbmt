@@ -338,14 +338,15 @@ export default function RecordScreen({ navigation }: any) {
     );
   }
 
+  // 點擊模式：一律以「得分」開啟面板（不依 side 判定）
   function decideWinInTap(_e: TapEvent): boolean {
-    return false; // 不影響（本檔案不使用 tap 模式得失判定）
+    return true;
   }
 
   // 路線模式點擊
   const onTap = (e: TapEvent) => {
     if (mode === 'tap') {
-      const isWin = decideWinInTap(e);
+      const isWin = decideWinInTap(e); // 固定得分面板
       const pointRoute = { start: e.point, end: e.point };
       if (e.zone === 'out')
         openPanel(
@@ -865,7 +866,7 @@ function TrendChart({ title, rows }: { title: string; rows: Array<{ win: boolean
 
   return (
     <View onLayout={e => setW(Math.floor(e.nativeEvent.layout.width))} style={{ marginBottom: 10, padding: 10, borderWidth: 1, borderColor: '#333', borderRadius: 10, backgroundColor: '#222' }}>
-      <Text style={{ color:'#fff', fontWeight:'600', marginBottom: 8 }}>{title}</Text>
+      <Text style={{ color: '#fff', fontWeight: '600', marginBottom: 8 }}>{title}</Text>
       {w <= 0 ? null : (
         <Svg width={w} height={H}>
           <G>

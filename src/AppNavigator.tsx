@@ -33,6 +33,9 @@ import ClubBoardScreen from './screens/ClubBoardScreen';
 import ClubStatsScreen from './screens/ClubStatsScreen';
 import ClubMembersScreen from './screens/ClubMembersScreen'; 
 import QuickScoreboardScreen from './screens/QuickScoreboardScreen';
+import AdminModerationScreen from './screens/AdminModerationScreen'; 
+import WebCamScreen from './screens/WebCamScreen';
+import WebCamViewerScreen from './screens/WebCamViewerScreen';
 
 
 const Stack = createNativeStackNavigator();
@@ -84,6 +87,10 @@ screenOptions={{ headerBackTitle: '', ...headerDark }}
 <Stack.Screen name="ClubStats" component={ClubStatsScreen} options={{ title: '社團統計' }} />
  <Stack.Screen name="ClubMembers" component={ClubMembersScreen} options={{ title: '社團成員' }} />
  <Stack.Screen name="QuickScoreboard" component={QuickScoreboardScreen} options={{ title: '快速計分板' }} />
+ {/* 新增：最大管理者的社群管理 */}
+<Stack.Screen name="AdminModeration" component={AdminModerationScreen} options={{ title: '社群管理（管理者）' }} />
+<Stack.Screen name="WebCam" component={WebCamScreen} options={{ title: 'WEB CAM' }} />
+<Stack.Screen name="WebCamViewer" component={WebCamViewerScreen} options={{ title: '觀看 CAM' }} />
 </Stack.Navigator>
 );
 }

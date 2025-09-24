@@ -7,6 +7,7 @@ import { startSyncLoop, stopSyncLoop } from './src/lib/sync';
 import GlobalBackground from './src/components/GlobalBackground';
 import { useBgStore } from './src/store/bg';
 import { supa } from './src/lib/supabase';
+import { startPresenceHeartbeat } from './src/lib/presence';
 
 export const AdminCtx = React.createContext<{ isAdmin: boolean }>({ isAdmin: false });
 
@@ -37,9 +38,9 @@ new Set([
 'SpeedCam', // 測速
 'Analysis', // 分析
 'Replay', // 回放
-'QuickScoreboard',//快速計分板
+'QuickScoreboard', //快速計分板
 ]),
-[]
+[],
 );
 
 // 是否顯示背景
@@ -68,29 +69,46 @@ const sub = Linking.addEventListener('url', ({ url }: { url: string }) => handle
 return () => sub.remove();
 }, []);
 
+// Sync + 背景 + Auth 狀態 + Presence 心跳
 React.useEffect(() => {
 startSyncLoop();
 // 載入本機背景設定（登入後才會渲染）
 useBgStore.getState().load().catch(() => {});
+
+// Presence 心跳停止器
+let stopPresence: undefined | (() => void);
 
 // 初始化與監聽登入狀態
 (async () => {
   try {
     const { data } = await supa.auth.getUser();
     setSignedIn(!!data?.user);
+    // 若已登入，啟動 presence 心跳
+    if (data?.user) {
+      stopPresence = startPresenceHeartbeat(30_000);
+    }
   } catch {
     setSignedIn(false);
   }
 })();
 
-const { data: sub } = supa.auth.onAuthStateChange((_event, session) => {
-  setSignedIn(!!session?.user);
+const { data: authSub } = supa.auth.onAuthStateChange((_event, session) => {
+  const on = !!session?.user;
+  setSignedIn(on);
+  // 切換 presence 心跳
+  try {
+    stopPresence?.();
+  } catch {}
+  stopPresence = on ? startPresenceHeartbeat(30_000) : undefined;
 });
 
 return () => {
   stopSyncLoop();
   try {
-    sub?.subscription?.unsubscribe?.();
+    authSub?.subscription?.unsubscribe?.();
+  } catch {}
+  try {
+    stopPresence?.();
   } catch {}
 };
 }, []);

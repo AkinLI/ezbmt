@@ -1,6 +1,7 @@
  import React from 'react'; 
  import { View, Text, TextInput, Pressable, Alert, Image, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, StatusBar, } from 'react-native'; 
  import { supa, getCurrentUser } from '../lib/supabase';
+ import AsyncStorage from '@react-native-async-storage/async-storage';
 const ACTION_IMG = require('../images/action.png'); // 確認路徑
 
 export default function AuthScreen({ navigation }: any) {

@@ -14,11 +14,10 @@
 		5851B71E0E1B70EDF775B2D7 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
-		E7914D57EB91CB6FE4712724 /* Pods_ezbmt.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 13AF2FDBEC2F068A25C2ADC2 /* Pods_ezbmt.framework */; };
+		AAFE4FFE59E581637C024731 /* Pods_ezbmt.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5CFC4C65395702F606801933 /* Pods_ezbmt.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		13AF2FDBEC2F068A25C2ADC2 /* Pods_ezbmt.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_ezbmt.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07F961A680F5B00A75B9A /* ezbmt.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ezbmt.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = ezbmt/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = ezbmt/Info.plist; sourceTree = "<group>"; };
@@ -26,10 +25,11 @@
 		3CC4A4642E8137970037C1ED /* RNSpeedCamViewManager.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = RNSpeedCamViewManager.m; sourceTree = "<group>"; };
 		3CC4A4662E8139960037C1ED /* RNSpeedCamViewManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RNSpeedCamViewManager.swift; sourceTree = "<group>"; };
 		3CC4A4682E8139A20037C1ED /* SpeedCamView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeedCamView.swift; sourceTree = "<group>"; };
+		4DF88B204CBE8F9C825D61A7 /* Pods-ezbmt.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ezbmt.debug.xcconfig"; path = "Target Support Files/Pods-ezbmt/Pods-ezbmt.debug.xcconfig"; sourceTree = "<group>"; };
+		5CFC4C65395702F606801933 /* Pods_ezbmt.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_ezbmt.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = ezbmt/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = ezbmt/LaunchScreen.storyboard; sourceTree = "<group>"; };
-		897432DDA658A6F73CCC65E1 /* Pods-ezbmt.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ezbmt.debug.xcconfig"; path = "Target Support Files/Pods-ezbmt/Pods-ezbmt.debug.xcconfig"; sourceTree = "<group>"; };
-		EACF48DD7B5D5DABD2C6DCC3 /* Pods-ezbmt.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ezbmt.release.xcconfig"; path = "Target Support Files/Pods-ezbmt/Pods-ezbmt.release.xcconfig"; sourceTree = "<group>"; };
+		8F77A3E311145FE464A1DD21 /* Pods-ezbmt.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-ezbmt.release.xcconfig"; path = "Target Support Files/Pods-ezbmt/Pods-ezbmt.release.xcconfig"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
@@ -38,7 +38,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E7914D57EB91CB6FE4712724 /* Pods_ezbmt.framework in Frameworks */,
+				AAFE4FFE59E581637C024731 /* Pods_ezbmt.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -61,7 +61,7 @@
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
-				13AF2FDBEC2F068A25C2ADC2 /* Pods_ezbmt.framework */,
+				5CFC4C65395702F606801933 /* Pods_ezbmt.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -101,8 +101,8 @@
 		BBD78D7AC51CEA395F1C20DB /* Pods */ = {
 			isa = PBXGroup;
 			children = (
-				897432DDA658A6F73CCC65E1 /* Pods-ezbmt.debug.xcconfig */,
-				EACF48DD7B5D5DABD2C6DCC3 /* Pods-ezbmt.release.xcconfig */,
+				4DF88B204CBE8F9C825D61A7 /* Pods-ezbmt.debug.xcconfig */,
+				8F77A3E311145FE464A1DD21 /* Pods-ezbmt.release.xcconfig */,
 			);
 			path = Pods;
 			sourceTree = "<group>";
@@ -114,13 +114,13 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "ezbmt" */;
 			buildPhases = (
-				4100B7B2D1FBBBA831909034 /* [CP] Check Pods Manifest.lock */,
+				2B687D95F2F65115E820822B /* [CP] Check Pods Manifest.lock */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
-				A8E851FDB6D2B0F5FDF8551F /* [CP] Embed Pods Frameworks */,
-				3505B0E1DB06676EBABB4C81 /* [CP] Copy Pods Resources */,
+				E0B1ABC97A007BFBFB75A47B /* [CP] Embed Pods Frameworks */,
+				D458545237E12DF9E5CD8DB1 /* [CP] Copy Pods Resources */,
 			);
 			buildRules = (
 			);
@@ -193,24 +193,7 @@
 			shellPath = /bin/sh;
 			shellScript = "set -e\n\nWITH_ENVIRONMENT=\"$REACT_NATIVE_PATH/scripts/xcode/with-environment.sh\"\nREACT_NATIVE_XCODE=\"$REACT_NATIVE_PATH/scripts/react-native-xcode.sh\"\n\n/bin/sh -c \"$WITH_ENVIRONMENT $REACT_NATIVE_XCODE\"\n";
 		};
-		3505B0E1DB06676EBABB4C81 /* [CP] Copy Pods Resources */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-ezbmt/Pods-ezbmt-resources-${CONFIGURATION}-input-files.xcfilelist",
-			);
-			name = "[CP] Copy Pods Resources";
-			outputFileListPaths = (
-				"${PODS_ROOT}/Target Support Files/Pods-ezbmt/Pods-ezbmt-resources-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-ezbmt/Pods-ezbmt-resources.sh\"\n";
-			showEnvVarsInLog = 0;
-		};
-		4100B7B2D1FBBBA831909034 /* [CP] Check Pods Manifest.lock */ = {
+		2B687D95F2F65115E820822B /* [CP] Check Pods Manifest.lock */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -232,7 +215,24 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		A8E851FDB6D2B0F5FDF8551F /* [CP] Embed Pods Frameworks */ = {
+		D458545237E12DF9E5CD8DB1 /* [CP] Copy Pods Resources */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-ezbmt/Pods-ezbmt-resources-${CONFIGURATION}-input-files.xcfilelist",
+			);
+			name = "[CP] Copy Pods Resources";
+			outputFileListPaths = (
+				"${PODS_ROOT}/Target Support Files/Pods-ezbmt/Pods-ezbmt-resources-${CONFIGURATION}-output-files.xcfilelist",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-ezbmt/Pods-ezbmt-resources.sh\"\n";
+			showEnvVarsInLog = 0;
+		};
+		E0B1ABC97A007BFBFB75A47B /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -268,7 +268,7 @@
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 897432DDA658A6F73CCC65E1 /* Pods-ezbmt.debug.xcconfig */;
+			baseConfigurationReference = 4DF88B204CBE8F9C825D61A7 /* Pods-ezbmt.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
@@ -299,7 +299,7 @@
 		};
 		13B07F951A680F5B00A75B9A /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = EACF48DD7B5D5DABD2C6DCC3 /* Pods-ezbmt.release.xcconfig */;
+			baseConfigurationReference = 8F77A3E311145FE464A1DD21 /* Pods-ezbmt.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;

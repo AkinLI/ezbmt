@@ -32,17 +32,35 @@ setLoading(false);
 
 React.useEffect(()=>{ load(); }, [load]);
 
+function displayNameOf(item: Row): string {
+const n = (item.name && item.name.trim()) || '';
+if (n) return n;
+const e = (item.email && item.email.trim()) || '';
+if (e) return e.split('@')[0];
+return (item.user_id ? (item.user_id.slice(0, 8) + '…') : 'Anon');
+}
+
 async function ensureBuddyIdForUser(signup: Row): Promise<string> {
-// 嘗試用名字在 buddies 找一個同名；找不到就新增一筆
-const name = (signup.name && signup.name.trim()) || (signup.email ? String(signup.email).split('@')[0] : '未命名');
-// 先找
+// 用顯示名稱作為 buddy 名稱（避免未命名）
+const name = displayNameOf(signup);
+
 try {
-const { data: found } = await supa.from('buddies').select('id').eq('club_id', clubId).eq('name', name).maybeSingle();
-if (found?.id) return String(found.id);
+  const { data: found } = await supa
+    .from('buddies')
+    .select('id')
+    .eq('club_id', clubId)
+    .eq('name', name)
+    .maybeSingle();
+  if (found?.id) return String(found.id);
 } catch {}
-// 新增（帶 id 以免重名）
+
 const id = Math.random().toString(36).slice(2);
-const { error } = await supa.from('buddies').insert({ id, club_id: clubId, name, level: 5 });
+const { error } = await supa.from('buddies').insert({
+  id,
+  club_id: clubId,
+  name,
+  level: 5,
+});
 if (error) throw error;
 return id;
 }
@@ -51,9 +69,7 @@ async function approve(signup: Row) {
 setBusy(signup.id);
 try {
 const buddyId = await ensureBuddyIdForUser(signup);
-// 寫入報到名單
 await upsertSessionAttendee({ session_id: sessionId, buddy_id: buddyId } as any);
-// 刪除報名
 await deleteSignup(signup.id);
 await load();
 Alert.alert('已核准', '已加入報到名單');
@@ -84,29 +100,33 @@ return (
 );
 }
 
-const Item = ({ item }: { item: Row }) => (
-<View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:'#1e1e1e', borderRadius:10, marginBottom:10 }}>
-<Text style={{ color:'#fff', fontWeight:'700' }}>{item.name || '未命名'}</Text>
-<Text style={{ color:'#bbb', marginTop:2 }}>{item.email || ''}</Text>
-<Text style={{ color:'#888', marginTop:2 }}>{new Date(item.created_at).toLocaleString()}</Text>
-<View style={{ flexDirection:'row', marginTop:8 }}>
-<Pressable
-onPress={()=>approve(item)}
-disabled={busy===item.id}
-style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:8, backgroundColor: busy===item.id ? '#555' : C.btn, marginRight:8 }}
->
-<Text style={{ color:'#fff' }}>{busy===item.id?'處理中…':'核准（加入報到）'}</Text>
-</Pressable>
-<Pressable
-onPress={()=>reject(item)}
-disabled={busy===item.id}
-style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:8, backgroundColor: C.warn }}
->
-<Text style={{ color:'#fff' }}>刪除</Text>
-</Pressable>
-</View>
-</View>
+const Item = ({ item }: { item: Row }) => {
+const display = displayNameOf(item);
+
+return (
+  <View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:'#1e1e1e', borderRadius:10, marginBottom:10 }}>
+    <Text style={{ color:'#fff', fontWeight:'700' }}>{display}</Text>
+    {!!item.email && <Text style={{ color:'#bbb', marginTop:2 }}>{item.email}</Text>}
+    <Text style={{ color:'#888', marginTop:2 }}>{new Date(item.created_at).toLocaleString()}</Text>
+    <View style={{ flexDirection:'row', marginTop:8 }}>
+      <Pressable
+        onPress={()=>approve(item)}
+        disabled={busy===item.id}
+        style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:8, backgroundColor: busy===item.id ? '#555' : C.btn, marginRight:8 }}
+      >
+        <Text style={{ color:'#fff' }}>{busy===item.id?'處理中…':'核准（加入報到）'}</Text>
+      </Pressable>
+      <Pressable
+        onPress={()=>reject(item)}
+        disabled={busy===item.id}
+        style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:8, backgroundColor: C.warn }}
+      >
+        <Text style={{ color:'#fff' }}>刪除</Text>
+      </Pressable>
+    </View>
+  </View>
 );
+};
 
 return (
 <View style={{ flex:1, backgroundColor:C.bg, padding:12 }}>
@@ -115,4 +135,3 @@ return (
 </View>
 );
 }
-

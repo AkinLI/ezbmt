@@ -521,9 +521,20 @@ const { data, error } = await supa.from('sessions').select('id,date,courts,round
 if (error) throw error;
 return data || [];
 }
+
 export async function createSession(args: { clubId: string; date: string; courts: number; roundMinutes: number }) {
+// 取目前登入者
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+
+// 帶入 created_by 以符合 RLS
 const { error } = await supa.from('sessions').insert({
-club_id: args.clubId, date: args.date, courts: args.courts, round_minutes: args.roundMinutes
+club_id: args.clubId,
+date: args.date,
+courts: args.courts,
+round_minutes: args.roundMinutes,
+created_by: uid,
 });
 if (error) throw error;
 }
@@ -994,4 +1005,74 @@ const { error } = await supa
 if (error) throw error;
 }
 
+// ========== Notifications: push_subscriptions / device_tokens ==========
+
+/** 追蹤某場次（sessionId）通知：在 push_subscriptions 寫入 kind='event', target_id=sessionId */
+export async function subscribeSessionNotification(sessionId: string): Promise<void> {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+
+// upsert（需在資料庫有 unique index: (kind, target_id, user_id)）
+const { error } = await supa
+.from('push_subscriptions')
+.upsert(
+{ kind: 'event', target_id: sessionId, user_id: uid },
+{ onConflict: 'kind,target_id,user_id' }
+);
+if (error) throw error;
+}
+
+/** 取消追蹤某場次（sessionId）通知 */
+export async function unsubscribeSessionNotification(sessionId: string): Promise<void> {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+
+const { error } = await supa
+.from('push_subscriptions')
+.delete()
+.eq('kind', 'event')
+.eq('target_id', sessionId)
+.eq('user_id', uid);
+if (error) throw error;
+}
+
+/** 查詢我對多個場次是否有追蹤通知 */
+export async function listSessionSubscriptions(sessionIds: string[]): Promise<Record<string, boolean>> {
+const map: Record<string, boolean> = {};
+if (!sessionIds.length) return map;
+
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) return map;
+
+const { data, error } = await supa
+.from('push_subscriptions')
+.select('target_id')
+.eq('kind', 'event')
+.eq('user_id', uid)
+.in('target_id', sessionIds as any);
+if (error) return map;
+
+(data || []).forEach((r: any) => { map[String(r.target_id)] = true; });
+return map;
+}
+
+/** 註冊裝置的推播 token（之後整合 FCM/Expo 用） */
+export async function registerDeviceToken(token: string): Promise<void> {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+if (!token) throw new Error('empty token');
+
+// upsert（建議資料庫有 unique index on token 或 (user_id, token)）
+const { error } = await supa
+.from('device_tokens')
+.upsert(
+{ user_id: uid, token },
+{ onConflict: 'token' }
+);
+if (error) throw error;
+}
 

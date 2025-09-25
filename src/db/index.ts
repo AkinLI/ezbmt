@@ -162,3 +162,7 @@ export const listMyInviteContactsWithNames = (supaDao as any).listMyInviteContac
 //export const signupSession = (supaDao as any).signupSession;
 //export const cancelSignup = (supaDao as any).cancelSignup;
 //export const deleteSignup = (supaDao as any).deleteSignup;
+export const subscribeSessionNotification = (supaDao as any).subscribeSessionNotification;
+export const unsubscribeSessionNotification = (supaDao as any).unsubscribeSessionNotification;
+export const listSessionSubscriptions = (supaDao as any).listSessionSubscriptions;
+export const registerDeviceToken = (supaDao as any).registerDeviceToken;

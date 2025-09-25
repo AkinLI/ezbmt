@@ -266,27 +266,50 @@ if (error) throw error;
 }
 
 export async function listSignups(sessionId: string): Promise<Array<{ id:string; user_id:string; name?:string|null; email?:string|null; created_at:string }>> {
-const { data, error } = await supa
-.from('sessions_signups')
-.select('id,user_id,created_at')
-.eq('session_id', sessionId)
-.order('created_at', { ascending: false });
+// 改用安全 RPC：list_signups_with_names
+const { data, error } = await supa.rpc('list_signups_with_names', { p_session_id: sessionId });
 if (error) throw error;
-const rows = (data || []) as Array<{ id:string; user_id:string; created_at:string }>;
-const ids = Array.from(new Set(rows.map(r => r.user_id))).filter(Boolean);
-let meta: Record<string, { name?: string|null; email?: string|null }> = {};
-if (ids.length) {
-const { data: prof } = await supa.from('profiles').select('id,name,email').in('id', ids as any);
-(prof || []).forEach((p:any) => { meta[p.id] = { name: p?.name || null, email: p?.email || null }; });
-}
-return rows.map(r => ({ id:r.id, user_id:r.user_id, created_at:r.created_at, name: meta[r.user_id]?.name || null, email: meta[r.user_id]?.email || null }));
+
+// 保底 fallback（極端狀況仍確保不出現「未命名」）
+const rows = (data || []) as Array<{ id:string; user_id:string; name?:string|null; email?:string|null; created_at:string }>;
+return rows.map(r => {
+const safeName =
+(r.name && String(r.name).trim()) ||
+(r.email ? String(r.email).split('@')[0] : (r.user_id ? r.user_id.slice(0,8)+'…' : 'Anon'));
+return { ...r, name: safeName };
+});
 }
 
 export async function signupSession(sessionId: string): Promise<void> {
 const { data: me } = await supa.auth.getUser();
 const uid = me?.user?.id;
+const uEmail = me?.user?.email || null;
 if (!uid) throw new Error('Not logged in');
-const { error } = await supa.from('sessions_signups').insert({ session_id: sessionId, user_id: uid });
+
+// 嘗試補 profiles 基本資料（若沒有 name，補 email 前綴；若沒有 email，補 auth 的 email）
+try {
+const { data: prof } = await supa
+.from('profiles')
+.select('id,name,email')
+.eq('id', uid)
+.maybeSingle();
+
+let newName = (prof?.name && String(prof.name).trim()) || '';
+let newEmail = (prof?.email && String(prof.email).trim()) || '';
+
+if (!newName && uEmail) newName = uEmail.split('@')[0];
+if (!newEmail && uEmail) newEmail = uEmail;
+
+if ((newName && newName !== (prof?.name || '')) || (newEmail && newEmail !== (prof?.email || ''))) {
+  await supa.from('profiles').upsert({ id: uid, name: newName || null, email: newEmail || null });
+}
+} catch {
+// 若 RLS 限制或表結構不同，略過不拋錯
+}
+
+const { error } = await supa
+.from('sessions_signups')
+.insert({ session_id: sessionId, user_id: uid });
 if (error) throw error;
 }
 

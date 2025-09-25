@@ -1,6 +1,17 @@
 import { Platform } from 'react-native';
-import * as RNHTMLtoPDF from 'react-native-html-to-pdf';
 import Share from 'react-native-share';
+import RNFS from 'react-native-fs';
+
+// 動態載入（default 優先）；沒有就回傳 undefined
+function getPdfConvert(): ((opts:any)=>Promise<any>) | undefined {
+try {
+const mod = require('react-native-html-to-pdf');
+const inst = mod?.default ?? mod;
+return inst?.convert;
+} catch {
+return undefined;
+}
+}
 
 function esc(s: any) {
 return String(s == null ? '' : s)
@@ -55,14 +66,14 @@ return rows.map(r => {
 const total = r.win + r.loss;
 const widthPct = Math.round(total / max * 100);
 const winPct = total ? Math.round(r.win / total * 100) : 0;
-return       `<div style="margin-bottom:8px">         <div style="display:flex;justify-content:space-between;margin-bottom:2px">           <span>${esc(r.label)}</span><span style="color:#555">${total} 次</span>         </div>         <div style="height:12px;background:#eee;border-radius:6px;overflow:hidden">           <div style="width:${widthPct}%;height:100%;background:#ffcdd2">             <div style="width:${winPct}%;height:100%;background:#90caf9"></div>           </div>         </div>       </div>    `;
+return `<div style="margin-bottom:8px">       <div style="display:flex;justify-content:space-between;margin-bottom:2px">         <span>${esc(r.label)}</span><span style="color:#555">${total} 次</span>       </div>       <div style="height:12px;background:#eee;border-radius:6px;overflow:hidden">         <div style="width:${widthPct}%;height:100%;background:#ffcdd2">           <div style="width:${winPct}%;height:100%;background:#90caf9"></div>         </div>       </div>     </div>`;
 }).join('\n');
 }
 
 function routeThumbs(th: Array<{ sx:number; sy:number; ex:number; ey:number; kind:'win'|'loss' }>, cols=4, size=150) {
 const items = th.map((r) => {
 const color = r.kind==='win'?'#1976d2':'#d32f2f';
-return       `<div style="width:${size}px;height:${Math.round(size*13.4/6.1)}px;border-radius:8px;overflow:hidden;background:#e8f5e9;margin:6px">         <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${Math.round(size*13.4/6.1)}" viewBox="0 0 ${size} ${Math.round(size*13.4/6.1)}">           <line x1="${r.sx*size}" y1="${r.sy*Math.round(size*13.4/6.1)}" x2="${r.ex*size}" y2="${r.ey*Math.round(size*13.4/6.1)}" stroke="${color}" stroke-width="4" stroke-dasharray="8,6" opacity="0.7" />         </svg>       </div>    `;
+return `<div style="width:${size}px;height:${Math.round(size*13.4/6.1)}px;border-radius:8px;overflow:hidden;background:#e8f5e9;margin:6px">       <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${Math.round(size*13.4/6.1)}" viewBox="0 0 ${size} ${Math.round(size*13.4/6.1)}">         <line x1="${r.sx*size}" y1="${r.sy*Math.round(size*13.4/6.1)}" x2="${r.ex*size}" y2="${r.ey*Math.round(size*13.4/6.1)}" stroke="${color}" stroke-width="4" stroke-dasharray="8,6" opacity="0.7" />       </svg>     </div>`;
 }).join('\n');
 return `<div style="display:flex;flex-wrap:wrap">${items}</div>`;
 }
@@ -106,14 +117,13 @@ const html =
     ${thumbs ? '<h2>球路縮圖（前 12 球）</h2>'+thumbs : ''}
   </body></html>`;
 
-// 指定輸出目錄（Android: Download；iOS: Documents）
+const convert = getPdfConvert();
+if (typeof convert !== 'function') {
+  throw new Error('RNHTMLtoPDF 不可用（模組未連結或尚未重編譯）');
+}
+
 const directory = Platform.OS === 'android' ? 'Download' : 'Documents';
 const fileBase = `match-${String(matchId).replace(/[^a-zA-Z0-9_-]/g,'-')}-${Date.now()}`;
-
-const convert = (RNHTMLtoPDF as any).convert;
-if (typeof convert !== 'function') {
-  throw new Error('RNHTMLtoPDF.convert 不可用，請確認套件安裝與連結');
-}
 
 const res = await convert({
   html,
@@ -126,22 +136,13 @@ const rawPath = res?.filePath;
 if (!rawPath) throw new Error('PDF 產生失敗（未取得檔案路徑）');
 
 const url = rawPath.startsWith('file://') ? rawPath : `file://${rawPath}`;
-
-try {
-  await Share.open({
-    url,
-    type: 'application/pdf',
-    filename: `${fileBase}.pdf`,
-    failOnCancel: false,
-    showAppsToView: true,
-  });
-} catch (e: any) {
-  const msg = String(e?.message || e).toLowerCase();
-  if (msg.includes('cancel')) {
-    return { path: url, cancelled: true };
-  }
-  throw e;
-}
+await Share.open({
+  url,
+  type: 'application/pdf',
+  filename: `${fileBase}.pdf`,
+  failOnCancel: false,
+  showAppsToView: true,
+});
 
 return { path: url, cancelled: false };
 } catch (err: any) {

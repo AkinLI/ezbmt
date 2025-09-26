@@ -17,7 +17,7 @@ warn:'#d32f2f', gray:'#616161'
 
 type SesRow = { id: string; date: string };
 
-function pad(n:number){ `return n<10?0${n}:String(n)`; }
+function pad(n:number){ return n<10?`0${n}`:String(n); }
 function fmt(d: Date) { return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
 function parseYmd(s: string): Date | null {
 if (!s) return null;

@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, FlatList, TextInput, Pressable, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { listClubs, createClub, getMyClubRoles, requestJoinClub } from '../db';
+import { supa } from '../lib/supabase';
 
 const C = { bg:'#111', card:'#222', text:'#fff', sub:'#bbb', border:'#333', primary:'#1976d2' };
 
@@ -13,6 +14,21 @@ const [desc, setDesc] = React.useState('');
 const [roles, setRoles] = React.useState<Record<string,string>>({});
 const [busy, setBusy] = React.useState<string | null>(null);
 
+// 新增：新增社團區塊是否展開（預設收合）
+const [createOpen, setCreateOpen] = React.useState(false);
+
+// 新增：最大管理者
+const [isAdmin, setIsAdmin] = React.useState<boolean>(false);
+
+// 擁有者數量（以 roles 判斷 owner）
+const ownerCount = React.useMemo(
+() => Object.values(roles).filter(r => String(r) === 'owner').length,
+[roles]
+);
+
+// 是否顯示「新增社團」區塊：最大管理者不受限；一般使用者最多 3 個
+const showCreate = isAdmin || ownerCount < 3;
+
 const load = React.useCallback(async () => {
 try {
 const rows = await listClubs();
@@ -21,12 +37,38 @@ const map = await getMyClubRoles((rows || []).map((r: { id: string }) => r.id));
 setRoles(map);
 } catch (e:any) { Alert.alert('載入失敗', String(e?.message||e)); }
 }, []);
+
 React.useEffect(()=>{ load(); }, [load]);
 
+// 取得是否為最大管理者
+React.useEffect(() => {
+let active = true;
+(async () => {
+try {
+const { data, error } = await supa.rpc('is_app_admin');
+if (active) setIsAdmin(!error && !!data);
+} catch {
+if (active) setIsAdmin(false);
+}
+})();
+return () => { active = false; };
+}, []);
+
 const add = async () => {
+// 雙重保護：非 admin 且已達 3 個，禁止再新增
+if (!isAdmin && ownerCount >= 3) {
+Alert.alert('無法建立', '一般使用者最多只能建立 3 個社團');
+return;
+}
 const nm = name.trim();
 if (!nm) return;
-try { await createClub({ name: nm, description: desc.trim()||undefined }); setName(''); setDesc(''); load(); }
+try {
+await createClub({ name: nm, description: desc.trim()||undefined });
+setName('');
+setDesc('');
+setCreateOpen(false); // 成功後收合
+load();
+}
 catch(e:any){ Alert.alert('新增失敗', String(e?.message||e)); }
 };
 
@@ -87,19 +129,55 @@ renderItem={renderItem}
 ListHeaderComponent={(
 <View style={{ marginBottom:12 }}>
 <Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>我的社團</Text>
-<View style={{ borderWidth:1, borderColor:C.border, borderRadius:10, padding:10 }}>
-<Text style={{ color:C.text, fontWeight:'600', marginBottom:6 }}>新增社團</Text>
-<TextInput value={name} onChangeText={setName} placeholder="社團名稱" placeholderTextColor="#888"
-style={{ borderWidth:1, borderColor:'#444', borderRadius:8, paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8 }} />
-<TextInput value={desc} onChangeText={setDesc} placeholder="簡介（可空）" placeholderTextColor="#888"
-style={{ borderWidth:1, borderColor:'#444', borderRadius:8, paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8 }} />
-<Pressable onPress={add} style={{ backgroundColor:C.primary, borderRadius:8, paddingVertical:10, alignItems:'center' }}>
-<Text style={{ color:'#fff' }}>建立</Text>
-</Pressable>
-</View>
-</View>
-)}
-/>
+
+        {/* 新增社團（預設收合；非 admin 且已達 3 個則隱藏） */}
+        {showCreate && (
+          <View style={{ borderWidth:1, borderColor:C.border, borderRadius:10, backgroundColor:C.card }}>
+            {/* 標題列（可點擊切換展開/收合） */}
+            <Pressable
+              onPress={()=>setCreateOpen(o=>!o)}
+              style={{ paddingHorizontal:10, paddingVertical:12, flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}
+            >
+              <Text style={{ color:C.text, fontWeight:'600' }}>新增社團</Text>
+              <Text style={{ color:'#90caf9' }}>{createOpen ? '▲' : '▼'}</Text>
+            </Pressable>
+
+            {/* 內容（展開才顯示） */}
+            {createOpen && (
+              <View style={{ paddingHorizontal:10, paddingBottom:10 }}>
+                <TextInput
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="社團名稱"
+                  placeholderTextColor="#888"
+                  style={{
+                    borderWidth:1, borderColor:'#444', borderRadius:8,
+                    paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8
+                  }}
+                />
+                <TextInput
+                  value={desc}
+                  onChangeText={setDesc}
+                  placeholder="簡介（可空）"
+                  placeholderTextColor="#888"
+                  style={{
+                    borderWidth:1, borderColor:'#444', borderRadius:8,
+                    paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8
+                  }}
+                />
+                <Pressable
+                  onPress={add}
+                  style={{ backgroundColor:C.primary, borderRadius:8, paddingVertical:10, alignItems:'center' }}
+                >
+                  <Text style={{ color:'#fff' }}>建立</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+    )}
+  />
 </View>
 );
 }

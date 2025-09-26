@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, FlatList, TextInput, Pressable, Alert } from 'react-native';
 import { useRoute } from '@react-navigation/native';
-import { listBuddies, upsertBuddy, deleteBuddy } from '../db';
+import { listBuddies, upsertBuddy, deleteBuddy, getMyClubRole } from '../db';  // 新增 getMyClubRole
 
 const C = { bg:'#111', card:'#222', text:'#fff', sub:'#bbb', border:'#333', primary:'#1976d2', warn:'#d32f2f' };
 
@@ -14,6 +14,19 @@ const [name, setName] = React.useState('');
 const [level, setLevel] = React.useState('5');
 const [note, setNote] = React.useState('');
 
+// 角色 + 權限
+const [role, setRole] = React.useState<string|null>(null);
+const canEdit = role === 'owner' || role === 'admin';
+
+React.useEffect(() => {
+let alive = true;
+(async () => {
+try { const r = await getMyClubRole(clubId); if (alive) setRole(r as any); }
+catch { if (alive) setRole(null); }
+})();
+return () => { alive = false; };
+}, [clubId]);
+
 const load = React.useCallback(async ()=>{
 try { setItems(await listBuddies(clubId)); }
 catch(e:any){ Alert.alert('載入失敗', String(e?.message||e)); }
@@ -21,14 +34,18 @@ catch(e:any){ Alert.alert('載入失敗', String(e?.message||e)); }
 React.useEffect(()=>{ load(); }, [load]);
 
 const add = async ()=>{
+if (!canEdit) return;
 const nm = name.trim();
 const lv = Number(level)||1;
 if (!nm) return;
-try { await upsertBuddy({ clubId, name:nm, level: Math.min(15, Math.max(1, lv)), note: note.trim()||undefined }); setName(''); setLevel('5'); setNote(''); load(); }
-catch(e:any){ Alert.alert('新增失敗', String(e?.message||e)); }
+try {
+await upsertBuddy({ clubId, name:nm, level: Math.min(15, Math.max(1, lv)), note: note.trim()||undefined });
+setName(''); setLevel('5'); setNote(''); load();
+} catch(e:any){ Alert.alert('新增失敗', String(e?.message||e)); }
 };
 
 const remove = async (id:string)=>{
+if (!canEdit) return;
 try { await deleteBuddy(id); load(); }
 catch(e:any){ Alert.alert('刪除失敗', String(e?.message||e)); }
 };
@@ -39,9 +56,11 @@ const renderItem = ({ item }: any) => (
 <Text style={{ color:C.text, fontWeight:'600' }}>{item.name}（Lv {item.level}）</Text>
 {!!item.note && <Text style={{ color:C.sub, marginTop:4 }} numberOfLines={2}>{item.note}</Text>}
 </View>
+{canEdit && (
 <Pressable onPress={()=>remove(item.id)} style={{ backgroundColor:C.warn, paddingVertical:6, paddingHorizontal:10, borderRadius:8 }}>
 <Text style={{ color:'#fff' }}>刪除</Text>
 </Pressable>
+)}
 </View>
 );
 
@@ -53,16 +72,21 @@ data={items}
 keyExtractor={i=>i.id}
 renderItem={renderItem}
 ListHeaderComponent={(
-<View style={{ borderWidth:1, borderColor:C.border, borderRadius:10, padding:10, marginBottom:10 }}>
-<Text style={{ color:C.text, fontWeight:'600', marginBottom:6 }}>新增球友</Text>
+<View style={{ borderWidth:1, borderColor:C.border, borderRadius:10, padding:10, marginBottom:10, opacity: canEdit ? 1 : 0.6 }}>
+<Text style={{ color:C.text, fontWeight:'600', marginBottom:6 }}>
+{canEdit ? '新增球友' : '僅社長/管理員可新增'}
+</Text>
 <TextInput value={name} onChangeText={setName} placeholder="姓名" placeholderTextColor="#888"
+editable={canEdit}
 style={{ borderWidth:1, borderColor:'#444', borderRadius:8, paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8 }} />
 <TextInput value={level} onChangeText={setLevel} placeholder="等級（1~15）" placeholderTextColor="#888" keyboardType="number-pad"
+editable={canEdit}
 style={{ borderWidth:1, borderColor:'#444', borderRadius:8, paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8, width:120 }} />
 <TextInput value={note} onChangeText={setNote} placeholder="備註（可空）" placeholderTextColor="#888"
+editable={canEdit}
 style={{ borderWidth:1, borderColor:'#444', borderRadius:8, paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8 }} />
-<Pressable onPress={add} style={{ backgroundColor:C.primary, borderRadius:8, paddingVertical:10, alignItems:'center' }}>
-<Text style={{ color:'#fff' }}>新增</Text>
+<Pressable disabled={!canEdit} onPress={add} style={{ backgroundColor: canEdit ? C.primary : '#555', borderRadius:8, paddingVertical:10, alignItems:'center' }}>
+<Text style={{ color:'#fff' }}>{canEdit ? '新增' : '無權限'}</Text>
 </Pressable>
 </View>
 )}
@@ -70,3 +94,4 @@ style={{ borderWidth:1, borderColor:'#444', borderRadius:8, paddingHorizontal:10
 </View>
 );
 }
+

@@ -222,3 +222,73 @@ if (error) return null;
 return data.user || null;
 }
 
+// ====== Realtime: Live score state ======
+export type LiveSnapshot = {
+scoreA: number; scoreB: number;
+servingTeam: 0|1;
+server?: { team:0|1; index:0|1; court:'R'|'L' };
+receiver?: { team:0|1; index:0|1; court:'R'|'L' };
+players?: Array<{ name?: string }>;
+};
+
+// Channel 池：避免重複建立
+type RTChannel = ReturnType<typeof supa.channel>;
+const chPool = new Map<string, { ch: RTChannel; ready: boolean; waiters: Array<() => void> }>();
+
+function getChannel(topic: string): { ch: RTChannel; ensureReady: () => Promise<void> } {
+let entry = chPool.get(topic);
+if (!entry) {
+const ch = supa.channel(topic, { config: { broadcast: { ack: true } } });
+entry = { ch, ready: false, waiters: [] };
+chPool.set(topic, entry);
+ch.subscribe((status: any) => {
+if (status === 'SUBSCRIBED') {
+entry!.ready = true;
+entry!.waiters.splice(0).forEach(fn => { try { fn(); } catch {} });
+}
+});
+}
+const ensureReady = () =>
+new Promise<void>((resolve) => {
+if (entry!.ready) return resolve();
+entry!.waiters.push(resolve);
+});
+return { ch: entry.ch, ensureReady };
+}
+
+/** 訂閱某場次的即時狀態 */
+export function subscribeLive(matchId: string, onState: (s: LiveSnapshot) => void) {
+const topic = `live:${matchId}`;
+const { ch } = getChannel(topic);
+const handler = (payload: any) => {
+const snap = payload?.payload as LiveSnapshot;
+if (snap && typeof snap === 'object') onState(snap);
+};
+ch.on('broadcast', { event: 'state' }, handler);
+
+// 確保已經有 SUBSCRIBED（getChannel 內會自動 subscribe）
+// 這裡不需 await；有狀態後才會推送事件
+return {
+unsubscribe: () => {
+try {
+ch.unsubscribe();
+} catch {}
+try {
+chPool.delete(topic);
+} catch {}
+},
+};
+}
+
+/** 發佈即時狀態（RecordScreen 每次 nextRally 後呼叫） */
+export async function publishLiveState(matchId: string, snap: LiveSnapshot): Promise<void> {
+const topic = `live:${matchId}`;
+const { ch, ensureReady } = getChannel(topic);
+try {
+await ensureReady(); // 必須在 SUBSCRIBED 後才能 send
+await ch.send({ type: 'broadcast', event: 'state', payload: snap });
+} catch {
+// 忽略：Realtime 無法即時傳時，仍有 DB 輪詢 fallback
+}
+}
+

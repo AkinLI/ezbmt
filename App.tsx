@@ -9,6 +9,7 @@ import { useBgStore } from './src/store/bg';
 import { supa } from './src/lib/supabase';
 import { startPresenceHeartbeat } from './src/lib/presence';
 import { initPushIfAvailable } from './src/lib/push';
+import { startSyncDownLoop, stopSyncDownLoop } from './src/lib/syncDown';
 
 export const AdminCtx = React.createContext<{ isAdmin: boolean }>({ isAdmin: false });
 
@@ -47,23 +48,40 @@ export default function App() {
 
   // 深連結處理（Email 驗證回跳）
   React.useEffect(() => {
-    const handleUrl = (urlStr: string) => {
-      try {
-        const u = new URL(urlStr);
-        const code = u.searchParams.get('code') || u.searchParams.get('token');
-        if (code) {
-          supa.auth.exchangeCodeForSession(code).catch(() => {});
-        }
-      } catch {}
-    };
+startSyncLoop();
+startSyncDownLoop();              // 新增：啟動下行同步循環（內部會檢查是否登入）
+useBgStore.getState().load().catch(() => {});
 
-    Linking.getInitialURL().then((initialUrl) => {
-      if (initialUrl) handleUrl(initialUrl);
-    });
+let stopPresence: undefined | (() => void);
 
-    const sub = Linking.addEventListener('url', ({ url }: { url: string }) => handleUrl(url));
-    return () => sub.remove();
-  }, []);
+(async () => {
+  try {
+    const { data } = await supa.auth.getUser();
+    setSignedIn(!!data?.user);
+    if (data?.user) {
+      stopPresence = startPresenceHeartbeat(30_000);
+    }
+  } catch {
+    setSignedIn(false);
+  }
+})();
+
+const { data: authSub } = supa.auth.onAuthStateChange((_event, session) => {
+  const on = !!session?.user;
+  setSignedIn(on);
+  try { stopPresence?.(); } catch {}
+  stopPresence = on ? startPresenceHeartbeat(30_000) : undefined;
+  // 下行同步循環本身有登入檢查，維持常駐即可；若你想更嚴格，也可在這裡 on/off：
+  // if (on) startSyncDownLoop(); else stopSyncDownLoop();
+});
+
+return () => {
+  stopSyncLoop();
+  stopSyncDownLoop();             // 新增：清除下行循環
+  try { authSub?.subscription?.unsubscribe?.(); } catch {}
+  try { stopPresence?.(); } catch {}
+};
+}, []);
 
   // Sync + 背景 + Auth 狀態 + Presence 心跳
   React.useEffect(() => {

@@ -1,8 +1,17 @@
 import { supa } from './supabase';
-import SQLite from 'react-native-sqlite-storage';
 import { openDB } from '../db/sqlite'; // 若你的 openDB 在聚合層，改對應路徑
 
+let timer: any = null;
+
 export async function syncDownOnce() {
+// 未登入就不跑
+try {
+const { data } = await supa.auth.getUser();
+if (!data?.user) return;
+} catch {
+return;
+}
+
 const d = await openDB();
 
 // 取 last sync
@@ -57,8 +66,16 @@ await d.executeSql('REPLACE INTO meta(k,v) VALUES(?,?)', ['last_down_sync_at', n
 await d.executeSql('COMMIT');
 }
 
-export function startSyncDownLoop() {
-// 前景每 60 秒跑一次
+export function startSyncDownLoop(intervalMs = 60_000) {
+if (timer) return;
+// 先跑一次
 syncDownOnce().catch(()=>{});
-return setInterval(()=>syncDownOnce().catch(()=>{}), 60_000);
+// 每 interval 跑一次
+timer = setInterval(() => syncDownOnce().catch(()=>{}), intervalMs);
+}
+
+export function stopSyncDownLoop() {
+if (!timer) return;
+clearInterval(timer);
+timer = null;
 }

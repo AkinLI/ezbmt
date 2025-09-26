@@ -469,28 +469,33 @@ const { data, error } = await supa.from('clubs').select('id,name,description').o
 if (error) throw error;
 return data || [];
 }
-export async function createClub(args: { name: string; description?: string }) {
-// 先建立社團
-const { data, error } = await supa
-.from('clubs')
-.insert({ name: args.name, description: args.description ?? null })
-.select('id')
-.single();
-if (error) throw error;
 
-// 再把建立者加為 owner（若已存在就覆寫角色）
+export async function createClub(args: { name: string; description?: string }) {
+const name = (args.name || '').trim();
+const desc = args.description == null ? null : String(args.description);
+if (!name) throw new Error('請輸入社團名稱');
+
+// 保證目前有登入者
 const { data: me } = await supa.auth.getUser();
 const uid = me?.user?.id;
-if (uid && data?.id) {
-const { error: e2 } = await supa
-.from('club_members')
-.upsert(
-{ club_id: data.id as string, user_id: uid, role: 'owner' },
-{ onConflict: 'club_id,user_id' }
-);
-if (e2) throw e2;
+if (!uid) throw new Error('尚未登入或登入已過期，請重新登入');
+
+// 呼叫 RPC：帶 p_user_id 作為保底
+const { data, error } = await supa.rpc('create_club_secure', {
+p_name: name,
+p_description: desc,
+p_user_id: uid,
+});
+
+if (error) {
+const msg = (error as any)?.message || String(error);
+throw new Error(msg);
 }
+return { ok: true, id: data as string };
 }
+
+
+
 export async function getMyClubRoles(clubIds: string[]): Promise<Record<string,string>> {
 if (!clubIds.length) return {};
 const { data, error } = await supa.from('club_members').select('club_id,role').in('club_id', clubIds as any);

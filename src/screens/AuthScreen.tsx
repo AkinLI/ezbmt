@@ -1,21 +1,56 @@
- import React from 'react'; 
- import { View, Text, TextInput, Pressable, Alert, Image, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, StatusBar, } from 'react-native'; 
- import { supa, getCurrentUser } from '../lib/supabase';
- import AsyncStorage from '@react-native-async-storage/async-storage';
-const ACTION_IMG = require('../images/action.png'); // 確認路徑
+import React from 'react';
+import {
+View,
+Text,
+TextInput,
+Pressable,
+Alert,
+Image,
+SafeAreaView,
+KeyboardAvoidingView,
+Platform,
+ScrollView,
+ActivityIndicator,
+StatusBar,
+} from 'react-native';
+import { supa, getCurrentUser } from '../lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const ACTION_IMG = require('../images/action.png');
+
+const LAST_EMAIL_KEY = 'auth:last_email';
 
 export default function AuthScreen({ navigation }: any) {
 const [email, setEmail] = React.useState('');
 const [password, setPassword] = React.useState('');
 const [busy, setBusy] = React.useState(false);
 const [mode, setMode] = React.useState<'signin' | 'signup'>('signin');
+const [prefillLoaded, setPrefillLoaded] = React.useState(false);
 
+// 若已登入則直接進 Home
 React.useEffect(() => {
 (async () => {
 const u = await getCurrentUser();
 if (u) navigation.replace('Home');
 })();
 }, [navigation]);
+
+// 載入上次登入使用的 email
+React.useEffect(() => {
+let active = true;
+(async () => {
+try {
+const saved = await AsyncStorage.getItem(LAST_EMAIL_KEY);
+if (active && typeof saved === 'string' && saved.trim()) {
+setEmail(saved.trim());
+}
+} catch {}
+if (active) setPrefillLoaded(true);
+})();
+return () => {
+active = false;
+};
+}, []);
 
 const submit = async () => {
 const addr = (email ?? '').trim();
@@ -42,6 +77,12 @@ default: 'ezbmt://auth-callback',
     if (error) throw error;
     Alert.alert('已送出確認信', '請到信箱點擊驗證連結完成註冊');
   }
+
+  // 記住此次登入的 email
+  try {
+    await AsyncStorage.setItem(LAST_EMAIL_KEY, addr);
+  } catch {}
+
   navigation.replace('Home');
 } catch (e: any) {
   Alert.alert('失敗', String(e?.message || e));
@@ -88,11 +129,7 @@ marginBottom: 10,
 LBF能力有限 羽球分析平台
 </Text>
 
-        <Image
-          source={ACTION_IMG}
-          resizeMode="contain"
-          style={{ width: '100%', height: 90, marginBottom: 14 }}
-        />
+        <Image source={ACTION_IMG} resizeMode="contain" style={{ width: '100%', height: 90, marginBottom: 14 }} />
 
         <View style={{ height: 1, backgroundColor: '#E9ECEF', marginBottom: 16 }} />
 
@@ -104,6 +141,7 @@ LBF能力有限 羽球分析平台
           value={email}
           onChangeText={setEmail}
           returnKeyType="next"
+          editable={!busy}
           style={{
             backgroundColor: '#f6f7f8',
             borderWidth: 1,
@@ -112,6 +150,7 @@ LBF能力有限 羽球分析平台
             paddingHorizontal: 14,
             paddingVertical: 12,
             marginBottom: 16,
+            opacity: prefillLoaded ? 1 : 0.7,
           }}
         />
 
@@ -122,6 +161,7 @@ LBF能力有限 羽球分析平台
           value={password}
           onChangeText={setPassword}
           returnKeyType="done"
+          editable={!busy}
           onSubmitEditing={!busy ? submit : undefined}
           style={{
             backgroundColor: '#f6f7f8',
@@ -157,7 +197,8 @@ LBF能力有限 羽球分析平台
         </Pressable>
 
         <Pressable
-          onPress={() => setMode((m) => (m === 'signin' ? 'signup' : 'signin'))}
+          onPress={() => setMode(m => (m === 'signin' ? 'signup' : 'signin'))}
+          disabled={busy}
           style={{ marginTop: 14, alignSelf: 'center' }}
         >
           <Text style={{ color: '#1976d2' }}>

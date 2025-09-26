@@ -356,7 +356,7 @@ export default function AdminModerationScreen() {
     }
   }, []);
 
-  // 撈 presence 10 分鐘內活躍（帶回 name/email）— 既有
+  // 撈 presence 10 分鐘內活躍（帶回 name/email）— 修改強化：明確以 String(key) 存取、顯示時同時呈現 name 與 email
   const loadActive = React.useCallback(async () => {
     setLoadingActive(true);
     setActivePage(1);
@@ -371,22 +371,25 @@ export default function AdminModerationScreen() {
       if (error) throw error;
 
       const uids = Array.from(new Set((data || []).map((r: any) => String(r.user_id))));
-      let meta: Record<string, { name?: string | null; email?: string | null }> = {};
+      // 以 String(id) 為 key，確保取值一致
+      const profilesMap: Record<string, { name?: string | null; email?: string | null }> = {};
       if (uids.length) {
         const { data: prof } = await supa.from('profiles').select('id,name,email').in('id', uids as any);
         (prof || []).forEach((p: any) => {
-          meta[p.id] = {
-            name: p?.name || null,
-            email: p?.email || null,
+          profilesMap[String(p.id)] = {
+            name: (p?.name != null ? String(p.name) : null),
+            email: (p?.email != null ? String(p.email) : null),
           };
         });
       }
+
       const rows: ActiveUser[] = (data || []).map((r: any) => {
-        const m = meta[String(r.user_id)] || {};
+        const uid = String(r.user_id);
+        const meta = profilesMap[uid] || {};
         return {
-          id: String(r.user_id),
-          name: m.name || null,
-          email: m.email || null,
+          id: uid,
+          name: (meta.name && String(meta.name)) || null,
+          email: (meta.email && String(meta.email)) || null,
           updated_at: String(r.last_seen_at || new Date().toISOString()),
           lat: typeof r.lat === 'number' ? r.lat : null,
           lng: typeof r.lng === 'number' ? r.lng : null,
@@ -833,7 +836,9 @@ export default function AdminModerationScreen() {
           ) : (
             joins.map(j => (
               <View key={j.id} style={{ borderBottomWidth:1, borderColor:'#2b2b2b', paddingVertical:8 }}>
-                <Text style={{ color:'#fff', fontWeight:'700' }}>{j.name || (j.email ? j.email.split('@')[0] : j.user_id.slice(0,8)+'…')}</Text>
+                <Text style={{ color:'#fff', fontWeight:'700' }}>
+                  {(j.name && j.name.trim()) || (j.email ? j.email.split('@')[0] : j.user_id.slice(0,8)+'…')}
+                </Text>
                 {!!j.email && <Text style={{ color:'#bbb', marginTop:2 }}>{j.email}</Text>}
                 {!!j.note && <Text style={{ color:'#ccc', marginTop:2 }}>備註：{j.note}</Text>}
                 <Text style={{ color:'#888', marginTop:2 }}>{new Date(j.created_at).toLocaleString()}</Text>
@@ -889,10 +894,20 @@ export default function AdminModerationScreen() {
                   <>
                     <ScrollView style={{ maxHeight: '70%' }} contentContainerStyle={{ paddingBottom: 10 }}>
                       {pageRows.map((u) => {
-                        const main = (u.email && u.email.trim()) || (u.name && u.name.trim()) || (u.id.slice(0, 8) + '…');
+                        const nameLine = (u.name && u.name.trim()) || '';
+                        const emailLine = (u.email && u.email.trim()) || '';
+                        const main = nameLine || emailLine || (u.id.slice(0, 8) + '…');
                         return (
                           <View key={u.id} style={{ paddingVertical: 8, borderBottomWidth: 1, borderColor: '#2b2b2b' }}>
                             <Text style={{ color: '#fff', fontWeight: '600' }}>{main}</Text>
+                            {/* 顯示兩者（若存在） */}
+                            {(nameLine && emailLine && nameLine !== emailLine) ? (
+                              <Text style={{ color: '#aaa', marginTop: 2 }}>{nameLine} · {emailLine}</Text>
+                            ) : nameLine ? (
+                              <Text style={{ color: '#aaa', marginTop: 2 }}>{nameLine}</Text>
+                            ) : emailLine ? (
+                              <Text style={{ color: '#aaa', marginTop: 2 }}>{emailLine}</Text>
+                            ) : null}
                             <Text style={{ color: '#888', marginTop: 2 }}>
                               最近活躍：{new Date(u.updated_at).toLocaleString()}
                             </Text>
@@ -931,13 +946,20 @@ export default function AdminModerationScreen() {
                     {activeUsers
                       .filter((u) => typeof u.lat === 'number' && typeof u.lng === 'number')
                       .map((u) => {
-                        const main = (u.email && u.email.trim()) || (u.name && u.name.trim()) || (u.id.slice(0, 8) + '…');
+                        const nameLine = (u.name && u.name.trim()) || '';
+                        const emailLine = (u.email && u.email.trim()) || '';
+                        const title = nameLine || emailLine || (u.id.slice(0, 8) + '…');
+                        const desc = [
+                          nameLine && emailLine ? `${nameLine} · ${emailLine}` : (nameLine || emailLine || ''),
+                          `最近活躍：${new Date(u.updated_at).toLocaleString()}`
+                        ].filter(Boolean).join('\n');
+                        // 舊 API：MapView.Marker（若使用新版可改為 <Marker>）
                         return (
                           <MapView.Marker
-                          key={u.id}
-                          coordinate={{ latitude: u.lat as number, longitude: u.lng as number }}
-                          title={main}
-                          description={`最近活躍：${new Date(u.updated_at).toLocaleString()}`}
+                            key={u.id}
+                            coordinate={{ latitude: u.lat as number, longitude: u.lng as number }}
+                            title={title}
+                            description={desc}
                           />
                         );
                       })}

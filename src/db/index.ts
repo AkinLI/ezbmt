@@ -166,3 +166,53 @@ export const subscribeSessionNotification = (supaDao as any).subscribeSessionNot
 export const unsubscribeSessionNotification = (supaDao as any).unsubscribeSessionNotification;
 export const listSessionSubscriptions = (supaDao as any).listSessionSubscriptions;
 export const registerDeviceToken = (supaDao as any).registerDeviceToken;
+
+
+// Club posts
+export const listClubPosts = (supaDao as any).listClubPosts;
+export const upsertClubPost = (supaDao as any).upsertClubPost;
+export const deleteClubPost = (supaDao as any).deleteClubPost;
+
+// Club join requests
+export const requestJoinClub = (supaDao as any).requestJoinClub;
+export const listJoinRequests = (supaDao as any).listJoinRequests;
+export const approveJoinRequest = (supaDao as any).approveJoinRequest;
+export const rejectJoinRequest = (supaDao as any).rejectJoinRequest;
+
+// Club polls
+export const listClubPolls = (supaDao as any).listClubPolls;
+export const createClubPoll = (supaDao as any).createClubPoll;
+export const deleteClubPoll = (supaDao as any).deleteClubPoll;
+export const getClubPoll = (supaDao as any).getClubPoll;
+export const voteClubPoll = (supaDao as any).voteClubPoll;
+
+// Club events
+export const listClubEvents = (supaDao as any).listClubEvents;
+export const createClubEvent = (supaDao as any).createClubEvent;
+export const deleteClubEvent = (supaDao as any).deleteClubEvent;
+export const getClubEvent = (supaDao as any).getClubEvent;
+export const rsvpClubEvent = (supaDao as any).rsvpClubEvent;
+export const cancelRsvpClubEvent = (supaDao as any).cancelRsvpClubEvent;
+
+// Club fees
+export const listClubFees = (supaDao as any).listClubFees;
+export const createClubFeeFromSession = (supaDao as any).createClubFeeFromSession;
+export const deleteClubFee = (supaDao as any).deleteClubFee;
+export const getClubFee = (supaDao as any).getClubFee;
+export const listClubFeeShares = (supaDao as any).listClubFeeShares;
+export const setClubFeeSharePaid = (supaDao as any).setClubFeeSharePaid;
+
+// Fee shares manual ops
+export const createClubFeeShare = (supaDao as any).createClubFeeShare;
+export const deleteClubFeeShare = (supaDao as any).deleteClubFeeShare;
+
+// Fee bills: create empty bill
+export const createClubFeeEmpty = (supaDao as any).createClubFeeEmpty;
+
+// Events: export RSVPs
+export const exportClubEventRsvps = (supaDao as any).exportClubEventRsvps;
+
+// Fee bills/shares update APIs
+export const updateClubFeeBill = (supaDao as any).updateClubFeeBill;
+export const updateClubFeeShare = (supaDao as any).updateClubFeeShare;
+export const setAllClubFeeSharesPaid = (supaDao as any).setAllClubFeeSharesPaid;

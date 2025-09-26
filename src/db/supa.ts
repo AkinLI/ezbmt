@@ -845,10 +845,42 @@ return (data || []) as SessionRow[];
 }
 
 export async function upsertAttendee(a: Omit<Attendee,'id'|'created_at'> & { id?: string }) {
-const payload = { ...a };
+// 僅寫入實際存在於 table 的欄位
+const payload: any = {};
+if ((a as any).id) payload.id = (a as any).id;
+if ((a as any).session_id) payload.session_id = (a as any).session_id;
+if ((a as any).buddy_id) payload.buddy_id = (a as any).buddy_id;
+if ((a as any).user_id) payload.user_id = (a as any).user_id;
+
+// 情境 1：有 id（明確更新單筆）
+if (payload.id) {
 const { error } = await supa
 .from('session_attendees')
 .upsert(payload, { onConflict: 'id' });
+if (error) throw error;
+return;
+}
+
+// 情境 2：以 (session_id, buddy_id) 去 upsert（符合你的 unique 鍵）
+if (payload.session_id && payload.buddy_id) {
+const { error } = await supa
+.from('session_attendees')
+.upsert(payload, { onConflict: 'session_id,buddy_id' });
+if (error) throw error;
+return;
+}
+
+// 情境 3：如果你之後支援 (session_id, user_id) 唯一，也一起 upsert
+if (payload.session_id && payload.user_id) {
+const { error } = await supa
+.from('session_attendees')
+.upsert(payload, { onConflict: 'session_id,user_id' });
+if (error) throw error;
+return;
+}
+
+// 其他情況：直接 insert（應該不會走到）
+const { error } = await supa.from('session_attendees').insert(payload);
 if (error) throw error;
 }
 
@@ -1075,4 +1107,635 @@ const { error } = await supa
 );
 if (error) throw error;
 }
+
+
+
+// -------- Club Posts --------
+export async function listClubPosts(clubId: string): Promise<Array<{ id:string; title:string; body?:string|null; pinned?:boolean; visible?:boolean; created_at?:string }>> {
+const { data, error } = await supa
+.from('club_posts')
+.select('id,club_id,title,body,pinned,visible,created_at')
+.eq('club_id', clubId)
+.order('pinned', { ascending: false })
+.order('created_at', { ascending: false });
+if (error) throw error;
+return (data || []) as any;
+}
+
+export async function upsertClubPost(args: { id?: string; clubId: string; title: string; body?: string; pinned?: boolean; visible?: boolean }) {
+const row: any = {
+id: args.id || undefined,
+club_id: args.clubId,
+title: args.title,
+body: args.body ?? null,
+pinned: !!args.pinned,
+visible: args.visible == null ? true : !!args.visible,
+};
+const { error } = await supa.from('club_posts').upsert(row, { onConflict: 'id' });
+if (error) throw error;
+}
+export async function deleteClubPost(id: string) {
+const { error } = await supa.from('club_posts').delete().eq('id', id);
+if (error) throw error;
+}
+
+// -------- Club Join Requests --------
+// 使用者提出申請
+export async function requestJoinClub(clubId: string, note?: string | null) {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+
+// upsert 保證唯一（需要資料庫端建立 unique 索引：club_id,user_id,status='pending' 或至少 (club_id,user_id)）
+// 若後端無法保證 unique，可先刪除 pending 再插入
+try {
+await supa.from('club_join_requests').insert({
+club_id: clubId,
+user_id: uid,
+note: note ?? null,
+status: 'pending',
+});
+} catch (e: any) {
+// 簡單忽略 duplicate 類錯誤
+const msg = String(e?.message || e).toLowerCase();
+if (!msg.includes('duplicate')) throw e;
+}
+}
+
+// 管理者查看申請清單（pending）
+export async function listJoinRequests(clubId: string): Promise<Array<{ id:string; user_id:string; name?:string|null; email?:string|null; note?:string|null; created_at:string }>> {
+const { data, error } = await supa
+.from('club_join_requests')
+.select('id, user_id, note, created_at')
+.eq('club_id', clubId)
+.eq('status', 'pending')
+.order('created_at', { ascending: false });
+if (error) throw error;
+const arr = (data || []) as Array<any>;
+if (!arr.length) return [];
+
+const ids = Array.from(new Set(arr.map(r => r.user_id)));
+const { data: prof } = await supa.from('profiles').select('id,name,email').in('id', ids as any);
+const map = new Map<string, { name?:string|null; email?:string|null }>();
+(prof || []).forEach((p:any)=> { map.set(String(p.id), { name: p.name || null, email: p.email || null }); });
+
+return arr.map(r => {
+const m = map.get(String(r.user_id)) || {};
+return {
+id: String(r.id),
+user_id: String(r.user_id),
+name: m.name || null,
+email: m.email || null,
+note: (r.note ?? null) as string|null,
+created_at: String(r.created_at),
+};
+});
+}
+
+export async function approveJoinRequest(requestId: string, role: 'member'|'scorer'|'scheduler'|'admin'|'owner' = 'member') {
+// 1) 取申請
+const { data: req, error: re } = await supa
+.from('club_join_requests')
+.select('id,club_id,user_id,status')
+.eq('id', requestId)
+.maybeSingle();
+if (re) throw re;
+if (!req) throw new Error('not_found');
+if (req.status !== 'pending') throw new Error('request_not_pending');
+
+// 2) upsert 成員
+const { error: me } = await supa
+.from('club_members')
+.upsert({ club_id: req.club_id, user_id: req.user_id, role }, { onConflict: 'club_id,user_id' });
+if (me) throw me;
+
+// 3) 標記 request 已核准
+const { error: ue } = await supa
+.from('club_join_requests')
+.update({ status: 'approved' })
+.eq('id', requestId);
+if (ue) throw ue;
+}
+
+export async function rejectJoinRequest(requestId: string) {
+const { error } = await supa
+.from('club_join_requests')
+.update({ status: 'rejected' })
+.eq('id', requestId);
+if (error) throw error;
+}
+
+// ---------- Club Polls ----------
+export async function listClubPolls(clubId: string): Promise<Array<{
+id:string; title:string; multi:boolean; anonymous:boolean; deadline?:string|null;
+options:Array<{id:string;text:string;order_no:number}>; created_at?:string;
+}>> {
+const { data: polls, error: pe } = await supa
+.from('club_polls')
+.select('id,club_id,title,multi,anonymous,deadline,created_at')
+.eq('club_id', clubId)
+.order('created_at', { ascending: false });
+if (pe) throw pe;
+const ids = (polls || []).map((p:any)=>p.id);
+if (!ids.length) return [];
+const { data: opts, error: oe } = await supa
+.from('club_poll_options')
+.select('id,poll_id,text,order_no')
+.in('poll_id', ids as any)
+.order('order_no', { ascending: true });
+if (oe) throw oe;
+const map = new Map<string, any[]>();
+(opts||[]).forEach((o:any) => {
+const k = String(o.poll_id);
+if (!map.has(k)) map.set(k, []);
+map.get(k)!.push({ id:o.id, text:o.text, order_no:o.order_no });
+});
+return (polls||[]).map((p:any)=>({
+id: p.id, title: p.title, multi: !!p.multi, anonymous: !!p.anonymous,
+deadline: p.deadline || null, created_at: p.created_at,
+options: map.get(p.id) || [],
+}));
+}
+
+export async function createClubPoll(args: {
+clubId: string;
+title: string;
+multi?: boolean;
+anonymous?: boolean;
+deadline?: string|null;
+options: Array<{ text:string; order_no:number }>;
+}) {
+const { data: me } = await supa.auth.getUser();
+if (!me?.user?.id) throw new Error('Not logged in');
+
+const { data: poll, error: pe } = await supa
+.from('club_polls')
+.insert({
+club_id: args.clubId,
+title: args.title,
+multi: !!args.multi,
+anonymous: !!args.anonymous,
+deadline: args.deadline ?? null,
+})
+.select('id')
+.single();
+if (pe) throw pe;
+
+for (const o of args.options) {
+const { error: oe } = await supa
+.from('club_poll_options')
+.insert({ poll_id: poll.id, text: o.text, order_no: o.order_no });
+if (oe) throw oe;
+}
+}
+
+export async function deleteClubPoll(id: string) {
+const { error } = await supa.from('club_polls').delete().eq('id', id);
+if (error) throw error;
+}
+
+export async function getClubPoll(pollId: string): Promise<{
+id:string; title:string; multi:boolean; anonymous:boolean; deadline?:string|null;
+options: Array<{ id:string; text:string; order_no:number; count:number }>;
+myVotes: string[];
+}> {
+const { data: p, error: pe } = await supa
+.from('club_polls')
+.select('id,club_id,title,multi,anonymous,deadline')
+.eq('id', pollId)
+.maybeSingle();
+if (pe) throw pe;
+if (!p) throw new Error('not_found');
+
+const { data: opts, error: oe } = await supa
+.from('club_poll_options')
+.select('id,text,order_no')
+.eq('poll_id', pollId)
+.order('order_no', { ascending: true });
+if (oe) throw oe;
+
+// 取所有投票（只抓 option_id），在前端聚合計數
+const { data: votes, error: ve } = await supa
+.from('club_poll_votes')
+.select('option_id')
+.eq('poll_id', pollId);
+if (ve) throw ve;
+
+const countMap = new Map<string, number>();
+(votes || []).forEach((v: any) => {
+const k = String(v.option_id);
+countMap.set(k, (countMap.get(k) || 0) + 1);
+});
+
+// 我的投票
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id || null;
+let myVotes: string[] = [];
+if (uid) {
+const { data: mv } = await supa
+.from('club_poll_votes')
+.select('option_id')
+.eq('poll_id', pollId)
+.eq('user_id', uid);
+myVotes = (mv || []).map((x:any)=>String(x.option_id));
+}
+
+return {
+id: String(p.id),
+title: String(p.title),
+multi: !!p.multi,
+anonymous: !!p.anonymous,
+deadline: p.deadline || null,
+options: (opts || []).map((o: any) => ({
+id: String(o.id),
+text: String(o.text),
+order_no: Number(o.order_no || 0),
+count: countMap.get(String(o.id)) || 0,
+})),
+myVotes,
+};
+}
+
+export async function voteClubPoll(pollId: string, optionIds: string[]) {
+const { data: p } = await supa.from('club_polls').select('id,multi,deadline').eq('id', pollId).maybeSingle();
+if (!p) throw new Error('not_found');
+if (p.deadline && new Date(p.deadline).getTime() < Date.now()) throw new Error('已過投票截止時間');
+
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id || null;
+if (!uid) throw new Error('Not logged in');
+
+// 單選：先清現有，再寫新票
+if (!p.multi) {
+await supa.from('club_poll_votes').delete().eq('poll_id', pollId).eq('user_id', uid);
+if (optionIds.length) {
+const opt = optionIds[0];
+await supa.from('club_poll_votes').insert({ poll_id: pollId, option_id: opt, user_id: uid });
+}
+return;
+}
+// 複選：先清除不在 optionIds 的舊票，再 upsert 新票
+const { data: old } = await supa
+.from('club_poll_votes')
+.select('option_id')
+.eq('poll_id', pollId)
+.eq('user_id', uid);
+const oldSet = new Set((old||[]).map((x:any)=>String(x.option_id)));
+const newSet = new Set(optionIds.map(String));
+
+// 需要刪除的
+const del: string[] = [];
+oldSet.forEach(id => { if (!newSet.has(id)) del.push(id); });
+if (del.length) {
+await supa.from('club_poll_votes').delete()
+.eq('poll_id', pollId)
+.eq('user_id', uid)
+.in('option_id', del as any);
+}
+
+// 需要新增的
+const add: string[] = [];
+newSet.forEach(id => { if (!oldSet.has(id)) add.push(id); });
+for (const id of add) {
+await supa.from('club_poll_votes').insert({ poll_id: pollId, option_id: id, user_id: uid });
+}
+}
+
+// ---------- Club Events ----------
+export async function listClubEvents(clubId: string): Promise<Array<{
+id:string; title:string; date?:string|null; time?:string|null; location?:string|null; capacity?:number|null; public?:boolean; created_at?:string;
+}>> {
+const { data, error } = await supa
+.from('club_events')
+.select('id,club_id,title,date,time,location,capacity,public,created_at')
+.eq('club_id', clubId)
+.order('date', { ascending: true })
+.order('created_at', { ascending: false });
+if (error) throw error;
+return (data || []) as any;
+}
+
+export async function createClubEvent(args: {
+clubId: string; title: string; date?: string|null; time?: string|null; location?: string|null; capacity?: number|null; public?: boolean;
+}) {
+const row: any = {
+club_id: args.clubId, title: args.title,
+date: args.date ?? null, time: args.time ?? null, location: args.location ?? null,
+capacity: args.capacity ?? null, public: args.public == null ? true : !!args.public,
+};
+const { error } = await supa.from('club_events').insert(row);
+if (error) throw error;
+}
+
+export async function deleteClubEvent(id: string) {
+const { error } = await supa.from('club_events').delete().eq('id', id);
+if (error) throw error;
+}
+
+export async function getClubEvent(eventId: string): Promise<{
+id:string; title:string; date?:string|null; time?:string|null; location?:string|null; capacity?:number|null; public?:boolean;
+attendees: Array<{ user_id:string; name?:string|null; email?:string|null }>;
+isMine: boolean; remain: number;
+}> {
+const { data: ev, error: ee } = await supa
+.from('club_events')
+.select('id,club_id,title,date,time,location,capacity,public')
+.eq('id', eventId)
+.maybeSingle();
+if (ee) throw ee;
+if (!ev) throw new Error('not_found');
+
+const { data: rs } = await supa
+.from('club_event_rsvps')
+.select('user_id')
+.eq('event_id', eventId);
+const uids = Array.from(new Set((rs||[]).map((r:any)=>String(r.user_id))));
+
+let meta: Record<string,{name?:string|null; email?:string|null}> = {};
+if (uids.length) {
+const { data: prof } = await supa.from('profiles').select('id,name,email').in('id', uids as any);
+(prof||[]).forEach((p:any)=>{ meta[String(p.id)] = { name: p.name || null, email: p.email || null }; });
+}
+
+const attendees = uids.map(uid => ({ user_id: uid, name: meta[uid]?.name || null, email: meta[uid]?.email || null }));
+
+const { data: me } = await supa.auth.getUser();
+const myId = me?.user?.id || null;
+const isMine = !!(myId && uids.includes(myId));
+const remain = ev.capacity ? Math.max(0, Number(ev.capacity) - attendees.length) : 9999;
+
+return {
+id: String(ev.id),
+title: String(ev.title),
+date: ev.date || null, time: ev.time || null, location: ev.location || null,
+capacity: ev.capacity == null ? null : Number(ev.capacity),
+public: !!ev.public,
+attendees,
+isMine,
+remain,
+};
+}
+
+// 取活動（已有 getClubEvent）
+// 這裡只改 rsvp：超過容量時丟錯
+export async function rsvpClubEvent(eventId: string) {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+
+// 容量檢查：若有 capacity，且目前已報名 >= capacity，則阻擋
+const { data: ev } = await supa
+.from('club_events')
+.select('id,capacity')
+.eq('id', eventId)
+.maybeSingle();
+const cap = ev?.capacity == null ? null : Number(ev.capacity);
+if (cap != null && Number.isFinite(cap)) {
+const { data: rsCnt } = await supa
+.from('club_event_rsvps')
+.select('user_id', { count: 'exact', head: true })
+.eq('event_id', eventId);
+const taken = Number(rsCnt || 0);
+if (taken >= cap) throw new Error('capacity_full');
+}
+
+// 唯一：(event_id,user_id)
+const { error } = await supa
+.from('club_event_rsvps')
+.upsert({ event_id: eventId, user_id: uid }, { onConflict: 'event_id,user_id' });
+if (error) throw error;
+}
+
+// 匯出活動報名名單（回傳陣列給 UI 組 csv）
+export async function exportClubEventRsvps(eventId: string): Promise<Array<{ user_id:string; name?:string|null; email?:string|null }>> {
+const { data: rows, error } = await supa
+.from('club_event_rsvps')
+.select('user_id')
+.eq('event_id', eventId);
+if (error) throw error;
+const ids = Array.from(new Set((rows || []).map((r:any)=> String(r.user_id))));
+if (!ids.length) return [];
+const { data: prof } = await supa.from('profiles').select('id,name,email').in('id', ids as any);
+const map = new Map<string, { name?:string|null; email?:string|null }>();
+(prof||[]).forEach((p:any)=>{ map.set(String(p.id), { name:p.name || null, email: p.email || null }); });
+return ids.map(uid => ({ user_id: uid, name: map.get(uid)?.name || null, email: map.get(uid)?.email || null }));
+}
+
+export async function createClubFeeEmpty(args: { clubId: string; title: string; date?: string|null; perPerson?: number|null; notes?: string|null }) {
+const row: any = {
+club_id: args.clubId,
+title: args.title,
+date: args.date ?? null,
+per_person: args.perPerson == null ? 0 : Number(args.perPerson),
+session_id: null,
+notes: args.notes ?? null,
+};
+const { error } = await supa.from('club_fee_bills').insert(row);
+if (error) throw error;
+}
+
+// ---------- Club Fees ----------
+export async function listClubFees(clubId: string): Promise<Array<{
+id:string; title:string; date?:string|null; per_person:number; session_id?:string|null;
+shares_count:number; paid_count:number; total_amount:number; created_at?:string;
+}>> {
+const { data: bills, error: be } = await supa
+.from('club_fee_bills')
+.select('id,club_id,title,date,per_person,session_id,created_at')
+.eq('club_id', clubId)
+.order('created_at', { ascending: false });
+if (be) throw be;
+
+const ids = (bills || []).map((b:any)=>b.id);
+if (!ids.length) return [];
+
+const { data: sums, error: se } = await supa
+.from('club_fee_shares')
+.select('bill_id, amount, paid')
+.in('bill_id', ids as any);
+if (se) throw se;
+
+const sumMap = new Map<string, {shares: number; paid: number; total: number}>();
+(bills||[]).forEach((b:any)=>sumMap.set(String(b.id), {shares:0, paid:0, total:0}));
+(sums||[]).forEach((r:any)=>{
+const k = String(r.bill_id);
+const m = sumMap.get(k)!;
+m.shares += 1;
+if (r.paid) m.paid += 1;
+m.total += Number(r.amount||0);
+});
+
+return (bills||[]).map((b:any)=>{
+const s = sumMap.get(String(b.id)) || {shares:0,paid:0,total:0};
+return {
+id: String(b.id),
+title: String(b.title),
+date: b.date || null,
+per_person: Number(b.per_person||0),
+session_id: b.session_id || null,
+shares_count: s.shares,
+paid_count: s.paid,
+total_amount: s.total,
+created_at: b.created_at || null,
+};
+});
+}
+
+export async function createClubFeeFromSession(args: {
+clubId: string;
+title: string;
+date?: string|null;
+perPerson: number;
+sessionId: string;
+}) {
+// 1) 建立 bill
+const { data: bill, error: be } = await supa
+.from('club_fee_bills')
+.insert({
+club_id: args.clubId,
+title: args.title,
+date: args.date ?? null,
+per_person: args.perPerson,
+session_id: args.sessionId,
+})
+.select('id')
+.single();
+if (be) throw be;
+
+// 2) 撈該 session 報到名單（name + buddy_id）
+const { data: atts, error: ae } = await supa
+.from('session_attendees_view')
+.select('buddy_id,name')
+.eq('session_id', args.sessionId)
+.order('id', { ascending: true });
+if (ae) throw ae;
+
+const rows = (atts||[]).map((a:any)=>({
+bill_id: bill.id,
+name: (a.name && String(a.name)) || '未命名',
+buddy_id: a.buddy_id || null,
+amount: args.perPerson,
+paid: false,
+paid_at: null,
+}));
+for (const r of rows) {
+const { error: ie } = await supa.from('club_fee_shares').insert(r);
+if (ie) throw ie;
+}
+}
+
+export async function deleteClubFee(id: string) {
+const { error } = await supa.from('club_fee_bills').delete().eq('id', id);
+if (error) throw error;
+}
+
+export async function getClubFee(billId: string): Promise<{ id:string; title:string; date?:string|null; per_person:number; session_id?:string|null }> {
+const { data, error } = await supa
+.from('club_fee_bills')
+.select('id,club_id,title,date,per_person,session_id')
+.eq('id', billId)
+.maybeSingle();
+if (error) throw error;
+if (!data) throw new Error('not_found');
+return {
+id: String(data.id),
+title: String(data.title),
+date: data.date || null,
+per_person: Number(data.per_person||0),
+session_id: data.session_id || null,
+};
+}
+
+export async function listClubFeeShares(billId: string): Promise<Array<{ id:string; name:string; amount:number; paid:boolean; paid_at?:string|null }>> {
+const { data, error } = await supa
+.from('club_fee_shares')
+.select('id,name,amount,paid,paid_at')
+.eq('bill_id', billId)
+.order('name', { ascending: true });
+if (error) throw error;
+return (data || []).map((r:any)=>({
+id: String(r.id),
+name: String(r.name || ''),
+amount: Number(r.amount||0),
+paid: !!r.paid,
+paid_at: r.paid_at || null,
+}));
+}
+
+export async function setClubFeeSharePaid(shareId: string, paid: boolean) {
+const patch: any = { paid };
+if (paid) patch.paid_at = new Date().toISOString();
+else patch.paid_at = null;
+const { error } = await supa.from('club_fee_shares').update(patch).eq('id', shareId);
+if (error) throw error;
+}
+
+// 手動新增/刪除 share
+export async function createClubFeeShare(args: { billId: string; name: string; amount: number; buddyId?: string|null; userId?: string|null }) {
+const row: any = {
+bill_id: args.billId,
+name: args.name,
+amount: args.amount,
+paid: false,
+paid_at: null,
+buddy_id: args.buddyId ?? null,
+user_id: args.userId ?? null,
+};
+const { error } = await supa.from('club_fee_shares').insert(row);
+if (error) throw error;
+}
+
+export async function deleteClubFeeShare(shareId: string) {
+const { error } = await supa.from('club_fee_shares').delete().eq('id', shareId);
+if (error) throw error;
+}
+
+
+// ---------- Club Fees: updates ----------
+export async function updateClubFeeBill(args: {
+id: string;
+title?: string;
+date?: string | null;
+perPerson?: number | null;
+notes?: string | null;
+}) {
+const patch: any = {};
+if (args.title != null) patch.title = args.title;
+if (args.date !== undefined) patch.date = args.date;
+if (args.perPerson !== undefined) patch.per_person = args.perPerson;
+if (args.notes !== undefined) patch.notes = args.notes;
+
+const { error } = await supa
+.from('club_fee_bills')
+.update(patch)
+.eq('id', args.id);
+if (error) throw error;
+}
+
+export async function updateClubFeeShare(args: {
+id: string;
+name?: string;
+amount?: number;
+}) {
+const patch: any = {};
+if (args.name != null) patch.name = args.name;
+if (args.amount != null) patch.amount = args.amount;
+const { error } = await supa
+.from('club_fee_shares')
+.update(patch)
+.eq('id', args.id);
+if (error) throw error;
+}
+
+export async function setAllClubFeeSharesPaid(billId: string, paid: boolean) {
+const patch: any = { paid };
+patch.paid_at = paid ? new Date().toISOString() : null;
+const { error } = await supa
+.from('club_fee_shares')
+.update(patch)
+.eq('bill_id', billId);
+if (error) throw error;
+}
+
+
 

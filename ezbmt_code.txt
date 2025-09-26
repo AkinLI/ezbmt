@@ -10,126 +10,122 @@ import GlobalBackground from './src/components/GlobalBackground';
 import { useBgStore } from './src/store/bg';
 import { supa } from './src/lib/supabase';
 import { startPresenceHeartbeat } from './src/lib/presence';
+import { initPushIfAvailable } from './src/lib/push';
 
 export const AdminCtx = React.createContext<{ isAdmin: boolean }>({ isAdmin: false });
 
 async function fetchIsAdmin(): Promise<boolean> {
-try {
-const { data } = await supa.rpc('is_app_admin');
-return !!data;
-} catch {
-return false;
-}
+  try {
+    const { data } = await supa.rpc('is_app_admin');
+    return !!data;
+  } catch {
+    return false;
+  }
 }
 
 export default function App() {
-const isDarkMode = useColorScheme() === 'dark';
+  const isDarkMode = useColorScheme() === 'dark';
 
-// 登入狀態：未登入不顯示背景
-const [signedIn, setSignedIn] = React.useState(false);
+  // 登入狀態：未登入不顯示背景
+  const [signedIn, setSignedIn] = React.useState(false);
 
-// 取得目前 Route 名稱，用來決定哪些畫面要隱藏背景
-const navRef = useNavigationContainerRef();
-const [routeName, setRouteName] = React.useState<string | undefined>(undefined);
+  // 取得目前 Route 名稱，用來決定哪些畫面要隱藏背景
+  const navRef = useNavigationContainerRef();
+  const [routeName, setRouteName] = React.useState<string | undefined>(undefined);
 
-// 這些畫面不顯示背景（依你的命名調整）
-const EXCLUDE_BG = React.useMemo(
-() =>
-new Set([
-'Record', // 記錄
-'SpeedCam', // 測速
-'Analysis', // 分析
-'Replay', // 回放
-'QuickScoreboard', //快速計分板
-]),
-[],
-);
+  const EXCLUDE_BG = React.useMemo(
+    () =>
+      new Set([
+        'Record',
+        'SpeedCam',
+        'Analysis',
+        'Replay',
+        'QuickScoreboard',
+      ]),
+    [],
+  );
 
-// 是否顯示背景
-const showBg = signedIn && routeName && !EXCLUDE_BG.has(routeName);
+  const showBg = signedIn && routeName && !EXCLUDE_BG.has(routeName);
 
-// 深連結處理（Email 驗證回跳）
-React.useEffect(() => {
-const handleUrl = (urlStr: string) => {
-try {
-const u = new URL(urlStr);
-const code = u.searchParams.get('code') || u.searchParams.get('token');
-if (code) {
-// supabase-js v2: 傳入字串
-supa.auth.exchangeCodeForSession(code).catch(() => {});
-}
-} catch {}
-};
+  // 深連結處理（Email 驗證回跳）
+  React.useEffect(() => {
+    const handleUrl = (urlStr: string) => {
+      try {
+        const u = new URL(urlStr);
+        const code = u.searchParams.get('code') || u.searchParams.get('token');
+        if (code) {
+          supa.auth.exchangeCodeForSession(code).catch(() => {});
+        }
+      } catch {}
+    };
 
-// App 冷啟時的連結
-Linking.getInitialURL().then((initialUrl) => {
-  if (initialUrl) handleUrl(initialUrl);
-});
+    Linking.getInitialURL().then((initialUrl) => {
+      if (initialUrl) handleUrl(initialUrl);
+    });
 
-// App 前景時的連結
-const sub = Linking.addEventListener('url', ({ url }: { url: string }) => handleUrl(url));
-return () => sub.remove();
-}, []);
+    const sub = Linking.addEventListener('url', ({ url }: { url: string }) => handleUrl(url));
+    return () => sub.remove();
+  }, []);
 
-// Sync + 背景 + Auth 狀態 + Presence 心跳
-React.useEffect(() => {
-startSyncLoop();
-// 載入本機背景設定（登入後才會渲染）
-useBgStore.getState().load().catch(() => {});
+  // Sync + 背景 + Auth 狀態 + Presence 心跳
+  React.useEffect(() => {
+    startSyncLoop();
+    useBgStore.getState().load().catch(() => {});
 
-// Presence 心跳停止器
-let stopPresence: undefined | (() => void);
+    let stopPresence: undefined | (() => void);
 
-// 初始化與監聽登入狀態
-(async () => {
-  try {
-    const { data } = await supa.auth.getUser();
-    setSignedIn(!!data?.user);
-    // 若已登入，啟動 presence 心跳
-    if (data?.user) {
-      stopPresence = startPresenceHeartbeat(30_000);
-    }
-  } catch {
-    setSignedIn(false);
-  }
-})();
+    (async () => {
+      try {
+        const { data } = await supa.auth.getUser();
+        setSignedIn(!!data?.user);
+        if (data?.user) {
+          stopPresence = startPresenceHeartbeat(30_000);
+        }
+      } catch {
+        setSignedIn(false);
+      }
+    })();
 
-const { data: authSub } = supa.auth.onAuthStateChange((_event, session) => {
-  const on = !!session?.user;
-  setSignedIn(on);
-  // 切換 presence 心跳
-  try {
-    stopPresence?.();
-  } catch {}
-  stopPresence = on ? startPresenceHeartbeat(30_000) : undefined;
-});
+    const { data: authSub } = supa.auth.onAuthStateChange((_event, session) => {
+      const on = !!session?.user;
+      setSignedIn(on);
+      try {
+        stopPresence?.();
+      } catch {}
+      stopPresence = on ? startPresenceHeartbeat(30_000) : undefined;
+    });
 
-return () => {
-  stopSyncLoop();
-  try {
-    authSub?.subscription?.unsubscribe?.();
-  } catch {}
-  try {
-    stopPresence?.();
-  } catch {}
-};
-}, []);
+    return () => {
+      stopSyncLoop();
+      try {
+        authSub?.subscription?.unsubscribe?.();
+      } catch {}
+      try {
+        stopPresence?.();
+      } catch {}
+    };
+  }, []);
 
-return (
-<SafeAreaProvider>
-<StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-<NavigationContainer
-ref={navRef}
-onReady={() => setRouteName(navRef.getCurrentRoute()?.name)}
-onStateChange={() => setRouteName(navRef.getCurrentRoute()?.name)}
->
-<AppNavigator />
-</NavigationContainer>
+  // 新增：登入後嘗試初始化推播（可選；未安裝 firebase/messaging 也會自動略過）
+  React.useEffect(() => {
+    if (!signedIn) return;
+    initPushIfAvailable().catch(() => {});
+  }, [signedIn]);
 
-  {/* 只有登入後且不在排除清單才顯示背景 */}
-  {showBg ? <GlobalBackground /> : null}
-</SafeAreaProvider>
-);
+  return (
+    <SafeAreaProvider>
+      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+      <NavigationContainer
+        ref={navRef}
+        onReady={() => setRouteName(navRef.getCurrentRoute()?.name)}
+        onStateChange={() => setRouteName(navRef.getCurrentRoute()?.name)}
+      >
+        <AppNavigator />
+      </NavigationContainer>
+
+      {showBg ? <GlobalBackground /> : null}
+    </SafeAreaProvider>
+  );
 }ezbmt-tracked/app.json
  
 {
@@ -1125,7 +1121,6 @@ ezbmt-tracked/tsconfig.json
  , "include": ["src//*.ts", "src//*.tsx"], "exclude": ["/node_modules", "/Pods"] }
 ezbmt-tracked/src/club/pairing.ts
  
-/* src/club/pairing.ts */
 export type PlayerLite = {
 id: string;
 name: string;
@@ -1134,10 +1129,10 @@ gender?: 'M'|'F'|'U'|null;
 };
 
 export type AttendeeLite = PlayerLite & {
-active?: boolean; // 今天是否可上（暫未用）
+active?: boolean;
 };
 
-export type Pair = [PlayerLite, PlayerLite]; // doubles; singles 時用一人 pair 即可
+export type Pair = [PlayerLite, PlayerLite];
 export type Team = { players: PlayerLite[]; avgLevel?: number; tags?: string[] };
 
 export type MatchPlan = {
@@ -1149,16 +1144,18 @@ team_b: Team;
 export type Constraints = {
 courts: number;
 teamSize: 1 | 2;                 // 單打/雙打
-partnerCooldown: number;         // 最近多少輪「不可」再搭（或重罰）
+partnerCooldown: number;         // 最近多少輪不可再搭（或重罰）
 opponentWindow: number;          // 最近多少輪避免對上（重罰）
 maxLevelDiffPerPair: number;     // 同隊的等級差上限（硬限制）
-preferMixedGender?: boolean;     // 偏好混合
+preferMixedGender?: boolean;     // 混合優先
+restCooldown: number;            // 新增：上/下場冷卻輪（距離 < 此輪數的玩家優先休息）
 };
 
 export type History = {
-recentPairs: Map<string, number>;      // key: aId|bId（排序後），值=距離最近一次搭檔的輪差（1=上一輪，2=上上輪...）
-recentOpponents: Map<string, number>;  // key: (aPairKey)|(bPairKey)
-lastPlayedRound: Map<string, number>;  // 每人最後上場輪 index
+recentPairs: Map<string, number>;
+recentOpponents: Map<string, number>;
+lastPlayedRound: Map<string, number>;
+lastIndex: number; // 已存在 rounds 的最大 index_no
 };
 
 export type PairingResult = {
@@ -1166,9 +1163,7 @@ matches: Array<{ teamA: Team; teamB: Team }>;
 waiting: PlayerLite[];
 };
 
-function key2(a: string, b: string) {
-return a < b ? `${a}|${b}` : `${b}|${a}`;
-}
+function key2(a: string, b: string) { return a < b ? `${a}|${b}` : `${b}|${a}`; }
 function pairKey(team: PlayerLite[]) {
 const ids = team.map(p => p.id).sort();
 return ids.join('&');
@@ -1180,8 +1175,11 @@ const sum = list.reduce((a,b)=>a+b,0);
 return Math.round((sum / list.length) * 10) / 10;
 }
 
-/** 從 rounds（含 matches）建立最近歷史 */
-export function buildHistoryFromRounds(rounds: Array<{ index_no: number; matches: Array<{ team_a:any; team_b:any }> }>, recentWindow = 3): History {
+/** 從 rounds（含 matches）建立最近歷史，並回傳 lastIndex */
+export function buildHistoryFromRounds(
+rounds: Array<{ index_no: number; matches: Array<{ team_a:any; team_b:any }> }>,
+recentWindow = 3
+): History {
 const recentPairs = new Map<string, number>();
 const recentOpponents = new Map<string, number>();
 const lastPlayedRound = new Map<string, number>();
@@ -1196,11 +1194,10 @@ for (const m of r.matches || []) {
 const A = ((m.team_a?.players as any[]) || []).map(x => ({ id:String(x.id), name:String(x.name||x.id) }));
 const B = ((m.team_b?.players as any[]) || []).map(x => ({ id:String(x.id), name:String(x.name||x.id) }));
 
-  // 更新「最後上場輪」
+  // 更新每人最後上場輪
   [...A, ...B].forEach(p => lastPlayedRound.set(p.id, idx));
 
   if (idx >= startIndex) {
-    // Pairs
     if (A.length >= 2) {
       for (let i=0;i<A.length;i++) for (let j=i+1;j<A.length;j++) {
         const k = key2(A[i].id, A[j].id);
@@ -1215,7 +1212,6 @@ const B = ((m.team_b?.players as any[]) || []).map(x => ({ id:String(x.id), name
         else recentPairs.set(k, Math.min(recentPairs.get(k)!, dist));
       }
     }
-    // Opponents（用 pairKey）
     const kA = pairKey(A), kB = pairKey(B);
     if (kA && kB) {
       const k = `${kA}|${kB}`;
@@ -1226,7 +1222,7 @@ const B = ((m.team_b?.players as any[]) || []).map(x => ({ id:String(x.id), name
 }
 }
 
-return { recentPairs, recentOpponents, lastPlayedRound };
+return { recentPairs, recentOpponents, lastPlayedRound, lastIndex };
 }
 
 /** 配對分數（越高越好） */
@@ -1239,19 +1235,16 @@ return -Infinity;
 
 let s = 100;
 
-// 等級差
-const alpha = 5; // 權重，越大越懲罰
+// 等級差懲罰
+const alpha = 5;
 s -= alpha * dLevel;
 
 // 近期搭檔懲罰
 const k = key2(a.id, b.id);
 const dist = hist.recentPairs.get(k); // 1=上一輪
 if (dist != null) {
-if (dist <= cons.partnerCooldown) {
-s -= 80; // 強烈懲罰
-} else {
-s -= Math.max(0, 30 - 5 * dist); // dist 越大，懲罰越少
-}
+if (dist <= cons.partnerCooldown) s -= 80;
+else s -= Math.max(0, 30 - 5 * dist);
 }
 
 // 性別偏好（簡單示例）
@@ -1264,10 +1257,9 @@ if (a.gender !== b.gender) s += 8; else s -= 6;
 return s;
 }
 
-/** 依分數由高到低，貪婪挑 pair */
+/** 依分數由高到低，貪婪挑 pair（在外層已做過休息名單的過濾/回退） */
 function greedyMakePairs(candidates: PlayerLite[], cons: Constraints, hist: History): { pairs: Pair[]; waiting: PlayerLite[] } {
 if (cons.teamSize === 1) {
-// 單打：每兩人一 pair（無需配對分數）
 const list = [...candidates];
 const pairs: Pair[] = [];
 while (list.length >= 2) pairs.push([list.shift()!, list.shift()!]);
@@ -1296,12 +1288,10 @@ const waiting = candidates.filter(p => !used.has(p.id));
 return { pairs, waiting };
 }
 
-/** 兩兩 pair 組成對戰（使等級相近且避免最近對手） */
+/** 兩兩 pair 組成對戰 */
 function assembleMatches(pairs: Pair[], cons: Constraints, hist: History): { matches: Array<{ teamA: Team; teamB: Team }>; waitingPairs: Pair[] } {
-// 將 pair 轉 team
 const teams: Team[] = pairs.map(p => ({ players: [p[0], p[1]], avgLevel: avgLevel([p[0], p[1]]) }));
 
-// 建立可配表，cost 越小越好
 type Edge = { i: number; j: number; cost: number };
 const edges: Edge[] = [];
 for (let i=0;i<teams.length;i++) {
@@ -1309,7 +1299,6 @@ for (let j=i+1;j<teams.length;j++) {
 const tA = teams[i], tB = teams[j];
 const diff = Math.abs((tA.avgLevel ?? 0) - (tB.avgLevel ?? 0));
 
-  // 近期對手懲罰
   const kA = pairKey(tA.players), kB = pairKey(tB.players);
   let oppPenalty = 0;
   const dist = hist.recentOpponents.get(`${kA}|${kB}`) ?? hist.recentOpponents.get(`${kB}|${kA}`);
@@ -1336,50 +1325,75 @@ const waitingPairs: Pair[] = [];
 for (let i=0;i<teams.length;i++) {
 if (!used.has(i)) {
 const ps = teams[i].players;
-const p: Pair = ps.length >= 2 ? [ps[0], ps[1]] : [ps[0], ps[0]]; // 單打不會走到這支線
+const p: Pair = ps.length >= 2 ? [ps[0], ps[1]] : [ps[0], ps[0]];
 waitingPairs.push(p);
 }
 }
 return { matches, waitingPairs };
 }
 
-/** 對外：生成一輪（輸入出席成員、約束、歷史 rounds） */
-export function pairRound(attendees: AttendeeLite[], cons: Constraints, prevRounds: Array<{ index_no:number; matches: Array<{ team_a:any; team_b:any }> }>): PairingResult {
-const active = attendees.slice(); // 可加 arrive/leave 篩選
+/** 產生一輪（含「上/下場冷卻」） */
+export function pairRound(
+attendees: AttendeeLite[],
+cons: Constraints,
+prevRounds: Array<{ index_no:number; matches: Array<{ team_a:any; team_b:any }> }>
+): PairingResult {
+const active = attendees.slice();
 const hist = buildHistoryFromRounds(prevRounds, Math.max(cons.partnerCooldown, cons.opponentWindow, 3));
 
-// 單打：直接每兩人一組；雙打：貪婪配 pair
-const { pairs, waiting } = greedyMakePairs(active, cons, hist);
+// 計算下一輪 index
+const lastIndex = hist.lastIndex || 0;
+const nextIndex = lastIndex + 1;
 
+// 先做「可上場名單」過濾：距離 < restCooldown 的玩家優先休息
+let pool = active;
+if (cons.restCooldown > 0) {
+const eligible = active.filter(p => {
+const last = hist.lastPlayedRound.get(p.id);
+if (last == null) return true; // 從未上過
+const dist = nextIndex - last; // 距離上一次上場的輪差
+return dist >= cons.restCooldown;
+});
+
+// 人數足夠就用 eligible，不足則回退用全部（避免卡住）
+const needBase = cons.teamSize === 1 ? 2 : 4; // 至少能組成一場
+pool = eligible.length >= needBase ? eligible : active;
+}
+
+// 接著與既有演算法相同
 let matches: Array<{ teamA: Team; teamB: Team }> = [];
 
 if (cons.teamSize === 1) {
-// 單打：兩兩 pair -> 對戰
-const singlesPairs = pairs; // 每個 pair 含二人
-// 將所有單打 pair 兩兩一組成對戰
+const list = [...pool];
+const singlesPairs: Pair[] = [];
+while (list.length >= 2) singlesPairs.push([list.shift()!, list.shift()!]);
+
 const tmp: Array<{ teamA: Team; teamB: Team }> = [];
-const list = [...singlesPairs];
-while (list.length >= 2 && tmp.length < cons.courts) {
-const pA = list.shift()!;
-const pB = list.shift()!;
-tmp.push({ teamA: { players: [pA[0]], avgLevel: avgLevel([pA[0]]) },
-teamB: { players: [pB[0]], avgLevel: avgLevel([pB[0]]) } });
+const pairList = [...singlesPairs];
+while (pairList.length >= 2 && tmp.length < cons.courts) {
+  const pA = pairList.shift()!;
+  const pB = pairList.shift()!;
+  tmp.push({
+    teamA: { players: [pA[0]], avgLevel: avgLevel([pA[0]]) },
+    teamB: { players: [pB[0]], avgLevel: avgLevel([pB[0]]) }
+  });
 }
 matches = tmp;
-const waitSingles = list.flatMap(p => p); // 未組成對戰的 pair -> 兩人都等待
-return { matches, waiting: [...waitSingles, ...waiting] };
+const waitSingles = pairList.flatMap(p => p);
+return { matches, waiting: [...waitSingles, ...active.filter(x=>!pool.includes(x))] };
 }
 
-// doubles：pairs 兩兩組對戰
+const { pairs, waiting } = greedyMakePairs(pool, cons, hist);
 const { matches: m2, waitingPairs } = assembleMatches(pairs, cons, hist);
-// 補 court 數上限
 matches = m2.slice(0, cons.courts);
 
-const waitingPlayers: PlayerLite[] = [...waiting];
+const waitingPlayers: PlayerLite[] = [...waiting, ...active.filter(x=>!pool.includes(x))];
 waitingPairs.forEach(p => { waitingPlayers.push(p[0], p[1]); });
 
 return { matches, waiting: waitingPlayers };
-}ezbmt-tracked/src/@types:react-native-sqlite-storage/index.d.ts
+}
+
+ezbmt-tracked/src/@types:react-native-sqlite-storage/index.d.ts
  
 declare module 'react-native-sqlite-storage' {
 export type SQLResultSetRow = { [key: string]: any };
@@ -4821,446 +4835,325 @@ import { getMyClubRole } from '../db';
 const C = { bg:'#111', card:'#1e1e1e', border:'#333', text:'#fff', sub:'#bbb', btn:'#1976d2', bad:'#d32f2f' };
 
 export default function PairingScreen() {
-  const route = useRoute<any>();
-  const navigation = useNavigation<any>();
-  const sessionId: string | undefined = route.params?.sessionId;
+const route = useRoute<any>();
+const navigation = useNavigation<any>();
+const sessionId: string | undefined = route.params?.sessionId;
 
-  const [loading, setLoading] = React.useState(true);
-  const [atts, setAtts] = React.useState<Attendee[]>([]);
-  const [rounds, setRounds] = React.useState<Array<{ id:string; index_no:number; status?:string|null; matches:any[] }>>([]);
+const [loading, setLoading] = React.useState(true);
+const [atts, setAtts] = React.useState<Attendee[]>([]);
+const [rounds, setRounds] = React.useState<Array<{ id:string; index_no:number; status?:string|null; matches:any[] }>>([]);
 
-  // session meta
-  const [sessionDate, setSessionDate] = React.useState<string>('');
-  const [sessionDefaults, setSessionDefaults] = React.useState<{ courts?: number|null; round_minutes?: number|null }>({});
-  const [sessionClubId, setSessionClubId] = React.useState<string | null>(null);
+const [sessionDate, setSessionDate] = React.useState<string>('');
+const [sessionDefaults, setSessionDefaults] = React.useState<{ courts?: number|null; round_minutes?: number|null }>({});
+const [sessionClubId, setSessionClubId] = React.useState<string | null>(null);
 
-  // 角色 gating
-  const [myRole, setMyRole] = React.useState<string | null>(null);
-  const canPair = ['owner','admin','scheduler'].includes(String(myRole || ''));
+const [myRole, setMyRole] = React.useState<string | null>(null);
+const canPair = ['owner','admin','scheduler'].includes(String(myRole || ''));
 
-  // 參數（可記憶）
-  const [courts, setCourts] = React.useState('4');
-  const [teamSize, setTeamSize] = React.useState<'1'|'2'>('2');
-  const [roundMinutes, setRoundMinutes] = React.useState('15');
-  const [partnerCooldown, setPartnerCooldown] = React.useState('1');
-  const [opponentWindow, setOpponentWindow] = React.useState('1');
-  const [maxLevelDiffPerPair, setMaxLevelDiffPerPair] = React.useState('5');
-  const [preferMixed, setPreferMixed] = React.useState(false);
+const [courts, setCourts] = React.useState('4');
+const [teamSize, setTeamSize] = React.useState<'1'|'2'>('2');
+const [roundMinutes, setRoundMinutes] = React.useState('15');
+const [partnerCooldown, setPartnerCooldown] = React.useState('1');
+const [opponentWindow, setOpponentWindow] = React.useState('1');
+const [maxLevelDiffPerPair, setMaxLevelDiffPerPair] = React.useState('5');
+const [preferMixed, setPreferMixed] = React.useState(false);
+const [restCooldown, setRestCooldown] = React.useState('1'); // 新增：上/下場冷卻輪
 
-  // 預覽
-  const [preview, setPreview] = React.useState<null | { matches: Array<{ teamA:any; teamB:any }>; waiting: any[] }>(null);
-  const [genBusy, setGenBusy] = React.useState(false);
-  const [publishBusy, setPublishBusy] = React.useState(false);
-  const [savingPrefs, setSavingPrefs] = React.useState(false);
-  const [resettingPrefs, setResettingPrefs] = React.useState(false);
+const [preview, setPreview] = React.useState<null | { matches: Array<{ teamA:any; teamB:any }>; waiting: any[] }>(null);
+const [genBusy, setGenBusy] = React.useState(false);
+const [publishBusy, setPublishBusy] = React.useState(false);
+const [savingPrefs, setSavingPrefs] = React.useState(false);
+const [resettingPrefs, setResettingPrefs] = React.useState(false);
 
-  const loadAll = React.useCallback(async () => {
-    if (!sessionId) return;
-    setLoading(true);
-    try {
-      const sid = sessionId as string;
+const loadAll = React.useCallback(async () => {
+if (!sessionId) return;
+setLoading(true);
+try {
+const sid = sessionId as string;
 
-      // A) session 預設帶入 + club_id 供權限判斷
+  try {
+    const { data: sRow } = await supa
+      .from('sessions')
+      .select('id,club_id,date,courts,round_minutes')
+      .eq('id', sid)
+      .maybeSingle();
+    if (sRow) {
+      if (sRow.courts != null && Number.isFinite(Number(sRow.courts))) setCourts(String(Number(sRow.courts)));
+      if (sRow.round_minutes != null && Number.isFinite(Number(sRow.round_minutes))) setRoundMinutes(String(Number(sRow.round_minutes)));
+      setSessionDate(sRow.date || '');
+      setSessionDefaults({ courts: sRow.courts ?? null, round_minutes: sRow.round_minutes ?? null });
+      setSessionClubId(sRow.club_id || null);
       try {
-        // 直接查 sessions 取得 club_id/基本欄位
-        const { data: sRow } = await supa
-          .from('sessions')
-          .select('id,club_id,date,courts,round_minutes')
-          .eq('id', sid)
-          .maybeSingle();
-        if (sRow) {
-          if (sRow.courts != null && Number.isFinite(Number(sRow.courts))) setCourts(String(Number(sRow.courts)));
-          if (sRow.round_minutes != null && Number.isFinite(Number(sRow.round_minutes))) setRoundMinutes(String(Number(sRow.round_minutes)));
-          setSessionDate(sRow.date || '');
-          setSessionDefaults({ courts: sRow.courts ?? null, round_minutes: sRow.round_minutes ?? null });
-          setSessionClubId(sRow.club_id || null);
-          // 角色
-          try {
-            const role = sRow.club_id ? await getMyClubRole(sRow.club_id) : null;
-            setMyRole(role);
-          } catch { setMyRole(null); }
-        }
-      } catch {}
-
-      // B) 本機偏好覆寫
-      try {
-        const p = await getPrefs(sid);
-        if (p) {
-          if (p.courts != null) setCourts(p.courts);
-          if (p.teamSize != null) setTeamSize(p.teamSize);
-          if (p.roundMinutes != null) setRoundMinutes(p.roundMinutes);
-          if (p.partnerCooldown != null) setPartnerCooldown(p.partnerCooldown);
-          if (p.opponentWindow != null) setOpponentWindow(p.opponentWindow);
-          if (p.maxLevelDiffPerPair != null) setMaxLevelDiffPerPair(p.maxLevelDiffPerPair);
-          if (typeof p.preferMixed === 'boolean') setPreferMixed(!!p.preferMixed);
-        }
-      } catch {}
-
-      // C) 名單與輪次
-      const [a, r] = await Promise.all([listSessionAttendees(sid), listRounds(sid)]);
-      setAtts(a);
-      setRounds((r || []).map((x: RoundRow & { matches: RoundMatch[] }) => ({
-        id: x.id,
-        index_no: Number(x.index_no || 0),
-        status: (x as any).status ?? null,
-        matches: (x as any).matches || [],
-      })));
-    } catch (e:any) {
-      Alert.alert('載入失敗', String(e?.message||e));
-    } finally {
-      setLoading(false);
+        const role = sRow.club_id ? await getMyClubRole(sRow.club_id) : null;
+        setMyRole(role);
+      } catch { setMyRole(null); }
     }
-  }, [sessionId]);
+  } catch {}
 
-  React.useEffect(() => { loadAll(); }, [loadAll]);
-
-  if (!sessionId) {
-    return (
-      <View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center', padding:16 }}>
-        <Text style={{ color:C.text, fontSize:16 }}>未提供 sessionId</Text>
-      </View>
-    );
-  }
-  if (loading) {
-    return (
-      <View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center' }}>
-        <ActivityIndicator color="#90caf9" />
-      </View>
-    );
-  }
-
-  const nowIndex = rounds.length ? Math.max(...rounds.map(r => Number(r.index_no||0))) : 0;
-  const nextIndex = nowIndex + 1;
-
-  function toLite(a: any) {
-    return { id: a.buddy_id || a.id, name: a.display_name, level: a.level ?? undefined, gender: (a.gender as any) ?? 'U' };
-  }
-
-  async function genPreview() {
-    if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可排點'); return; }
-    setGenBusy(true);
-    try {
-      const candidates = atts.map(toLite);
-      const cons: Constraints = {
-        courts: Math.max(1, Number(courts||'1')),
-        teamSize: (teamSize==='1' ? 1 : 2),
-        partnerCooldown: Math.max(0, Number(partnerCooldown||'0')),
-        opponentWindow: Math.max(0, Number(opponentWindow||'0')),
-        maxLevelDiffPerPair: Math.max(0, Number(maxLevelDiffPerPair||'0')),
-        preferMixedGender: !!preferMixed,
-      };
-      const prevRounds = rounds.map(r => ({ index_no: Number(r.index_no||0), matches: r.matches || [] }));
-      const res = pairRound(candidates, cons, prevRounds);
-      setPreview({ matches: res.matches, waiting: res.waiting });
-    } catch (e:any) {
-      Alert.alert('產生失敗', String(e?.message || e));
-    } finally {
-      setGenBusy(false);
+  try {
+    const p = await getPrefs(sid);
+    if (p) {
+      if (p.courts != null) setCourts(p.courts);
+      if (p.teamSize != null) setTeamSize(p.teamSize);
+      if (p.roundMinutes != null) setRoundMinutes(p.roundMinutes);
+      if (p.partnerCooldown != null) setPartnerCooldown(p.partnerCooldown);
+      if (p.opponentWindow != null) setOpponentWindow(p.opponentWindow);
+      if (p.maxLevelDiffPerPair != null) setMaxLevelDiffPerPair(p.maxLevelDiffPerPair);
+      if (typeof p.preferMixed === 'boolean') setPreferMixed(!!p.preferMixed);
+      if (p.restCooldown != null) setRestCooldown(p.restCooldown); // 新增
     }
-  }
+  } catch {}
 
-  async function publish() {
-    if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可發布'); return; }
-    if (!preview) {
-      Alert.alert('提示', '請先產生預覽');
-      return;
-    }
-    setPublishBusy(true);
-    try {
-      const sid = sessionId as string;
-      const start = new Date();
-      const end = new Date(start.getTime() + Math.max(5, Number(roundMinutes||'15')) * 60 * 1000);
-
-      const payload = {
-        index_no: nextIndex,
-        start_at: start.toISOString(),
-        end_at: end.toISOString(),
-        status: 'published' as const,
-        matches: preview.matches.map((m, i) => ({
-          court_no: i+1,
-          team_a: { players: m.teamA.players, avgLevel: m.teamA.avgLevel },
-          team_b: { players: m.teamB.players, avgLevel: m.teamB.avgLevel },
-        })),
-      };
-      const newRoundId = await upsertRound(sid, payload);
-
-      // mirror 發布結果到 round_courts
-      try {
-        const rows = payload.matches.map((m) => ({
-          court_no: m.court_no,
-          team_a_ids: (m.team_a?.players || []).map((p:any) => p.id),
-          team_b_ids: (m.team_b?.players || []).map((p:any) => p.id),
-        }));
-        await upsertRoundCourts(newRoundId, rows);
-      } catch {}
-
-      // 可選：發布通知（需要你有 device token 邏輯；函式存在就算成功）
-      try {
-        await supa.functions.invoke('send_notify', {
-          body: {
-            kind: 'event',
-            targetId: sid,
-            title: `第 ${nextIndex} 輪已發布`,
-            body: '請留意看板與場地',
-            data: { sessionId: sid, roundId: newRoundId }
-          }
-        });
-      } catch {}
-
-      Alert.alert('已發布', `第 ${nextIndex} 輪已建立`);
-      setPreview(null);
-      await loadAll();
-    } catch (e:any) {
-      Alert.alert('發布失敗', String(e?.message || e));
-    } finally {
-      setPublishBusy(false);
-    }
-  }
-
-  const onSavePrefs = async () => {
-    try {
-      setSavingPrefs(true);
-      const prefs: PairingPrefs = { courts, teamSize, roundMinutes, partnerCooldown, opponentWindow, maxLevelDiffPerPair, preferMixed };
-      await savePrefs(sessionId!, prefs);
-      Alert.alert('已儲存', '已記住這個場次的排點參數');
-    } catch (e:any) {
-      Alert.alert('儲存失敗', String(e?.message||e));
-    } finally {
-      setSavingPrefs(false);
-    }
-  };
-  const onResetPrefs = async () => {
-    try {
-      setResettingPrefs(true);
-      await clearPrefs(sessionId!);
-      setCourts(String(Number(sessionDefaults.courts ?? 4)));
-      setRoundMinutes(String(Number(sessionDefaults.round_minutes ?? 15)));
-      setTeamSize('2'); setPartnerCooldown('1'); setOpponentWindow('1'); setMaxLevelDiffPerPair('5'); setPreferMixed(false);
-      Alert.alert('已還原', '已還原為場次預設（或系統預設）');
-    } catch (e:any) {
-      Alert.alert('還原失敗', String(e?.message||e));
-    } finally {
-      setResettingPrefs(false);
-    }
-  };
-
-  const onMarkOngoing = async (roundId: string) => {
-    if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可切換狀態'); return; }
-    try { await setRoundStatus(roundId, 'ongoing'); await loadAll(); }
-    catch (e:any){ Alert.alert('設定失敗', String(e?.message || e)); }
-  };
-  const onMarkFinished = async (roundId: string) => {
-    if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可切換狀態'); return; }
-    try { await setRoundStatus(roundId, 'finished'); await loadAll(); }
-    catch (e:any){ Alert.alert('設定失敗', String(e?.message || e)); }
-  };
-
-  if (!myRole && sessionClubId) {
-    return (
-      <View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center' }}>
-        <ActivityIndicator color="#90caf9" />
-      </View>
-    );
-  }
-
-  const nowIndexNo = rounds.length ? Math.max(...rounds.map(r => Number(r.index_no||0))) : 0;
-  const nextIndexNo = nowIndexNo + 1;
-
-  function AttendeeCard({ a }: { a: any }) {
-    return (
-      <View style={{ width:'48%', minWidth:140, padding:8, backgroundColor:'#222', borderRadius:8, marginRight:'2%', marginBottom:8, borderColor:C.border, borderWidth:1 }}>
-        <Text style={{ color:C.text, fontWeight:'600' }}>{a.display_name || ''}</Text>
-        <Text style={{ color:C.sub, marginTop:2 }}>
-          {`L${a.level ?? '-'}`} {a.gender ?? ''} {a.handedness ?? ''}
-        </Text>
-      </View>
-    );
-  }
-
-  function MatchCard({ m, idx }: { m: any; idx: number }) {
-    return (
-      <View style={{ padding:10, backgroundColor:C.card, borderRadius:10, borderColor:C.border, borderWidth:1, marginBottom:10 }}>
-        <Text style={{ color:C.text, fontWeight:'700', marginBottom:6 }}>{`場地 ${idx+1}`}</Text>
-        <Text style={{ color:'#90caf9' }}>
-          {String((m.teamA?.players||[]).map((p:any)=>p.name).join('、'))}
-          {`（L${m.teamA?.avgLevel ?? '-'}）`}
-        </Text>
-        <Text style={{ color:'#ddd', marginVertical:4 }}>VS</Text>
-        <Text style={{ color:'#ef9a9a' }}>
-          {String((m.teamB?.players||[]).map((p:any)=>p.name).join('、'))}
-          {`（L${m.teamB?.avgLevel ?? '-'}）`}
-        </Text>
-        <View style={{ flexDirection:'row', marginTop:6 }}>
-          <Pressable
-            onPress={()=>navigation.navigate('ClubScoreboard', { roundId: rounds.find(r=>r.index_no===nextIndexNo)?.id || '', courtNo: idx+1, courts: Number(courts || sessionDefaults.courts || 0) })}
-            style={{ backgroundColor:'#1976d2', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8 }}
-          >
-            <Text style={{ color:'#fff' }}>啟動計分板</Text>
-          </Pressable>
-        </View>
-      </View>
-    );
-  }
-
-  const statusLabel = (s?: string|null) =>
-    s === 'published' ? '已發布' :
-    s === 'ongoing'  ? '進行中' :
-    s === 'finished' ? '已結束' : '—';
-
-  const statusChipStyle = (s?: string|null) => {
-    const color =
-      s === 'published' ? '#1976d2' :
-      s === 'ongoing'  ? '#2e7d32' :
-      s === 'finished' ? '#757575' : '#555';
-    return { borderColor: color, bg: `${color}22`, color };
-  };
-
-  return (
-    <ScrollView style={{ flex:1, backgroundColor:C.bg }} contentContainerStyle={{ padding:12 }}>
-      <Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>
-        社團排點{sessionDate ? `（${sessionDate}）` : ''}
-      </Text>
-
-      {/* 參與名單 */}
-      <Text style={{ color:C.sub, marginBottom:6 }}>{`參與者（${atts.length}）`}</Text>
-      <View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
-        {atts.map(a => <AttendeeCard key={a.id} a={a} />)}
-      </View>
-
-      {/* 參數（僅 canPair 可編輯） */}
-      <View style={{ padding:10, backgroundColor:C.card, borderRadius:10, borderColor:C.border, borderWidth:1, marginTop:10 }}>
-        <Text style={{ color:C.text, fontWeight:'700', marginBottom:8 }}>參數</Text>
-        <View style={{ flexDirection:'row', flexWrap:'wrap', opacity: canPair ? 1 : 0.5 }}>
-          <Param title="球場數" v={courts} setV={canPair?setCourts:()=>{}} />
-          <Param title="每輪(分)" v={roundMinutes} setV={canPair?setRoundMinutes:()=>{}} />
-          <Param title="單打(1)/雙打(2)" v={teamSize} setV={canPair?(s)=>setTeamSize((s==='1'?'1':'2')):()=>{}} />
-          <Param title="搭檔冷卻輪" v={partnerCooldown} setV={canPair?setPartnerCooldown:()=>{}} />
-          <Param title="對手避免(輪)" v={opponentWindow} setV={canPair?setOpponentWindow:()=>{}} />
-          <Param title="同隊等級差上限" v={maxLevelDiffPerPair} setV={canPair?setMaxLevelDiffPerPair:()=>{}} />
-        </View>
-
-        <View style={{ flexDirection:'row', flexWrap:'wrap', marginTop:8, opacity: canPair ? 1 : 0.5 }}>
-          <Pressable onPress={canPair?()=>setPreferMixed(v=>!v):()=>{}} style={{ padding:8, borderRadius:8, borderWidth:1, borderColor:C.border, marginRight:8 }}>
-            <Text style={{ color:'#90caf9' }}>{preferMixed ? '混雙偏好：開' : '混雙偏好：關'}</Text>
-          </Pressable>
-          {canPair && (
-            <>
-              <Pressable onPress={onSavePrefs} style={{ padding:8, borderRadius:8, backgroundColor:savingPrefs?'#555':'#1976d2', marginRight:8 }} disabled={savingPrefs}>
-                <Text style={{ color:'#fff' }}>{savingPrefs ? '儲存中…' : '儲存參數'}</Text>
-              </Pressable>
-              <Pressable onPress={onResetPrefs} style={{ padding:8, borderRadius:8, backgroundColor:resettingPrefs?'#555':'#455a64' }} disabled={resettingPrefs}>
-                <Text style={{ color:'#fff' }}>{resettingPrefs ? '還原中…' : '還原預設'}</Text>
-              </Pressable>
-            </>
-          )}
-        </View>
-      </View>
-
-      {/* 動作（僅 canPair 能操作） */}
-      <View style={{ flexDirection:'row', marginTop:10 }}>
-        <Btn text={genBusy ? '產生中…' : '產生預覽'} onPress={genPreview} disabled={genBusy || !canPair} />
-        <View style={{ width:8 }} />
-        <Btn text={publishBusy ? '發布中…' : `發布第${nowIndex+1}輪`} onPress={publish} disabled={!preview || publishBusy || !canPair} />
-      </View>
-
-      {/* 預覽 */}
-      {preview && (
-        <View style={{ marginTop:12 }}>
-          <Text style={{ color:C.text, fontWeight:'700', marginBottom:6 }}>{`預覽（第 ${nowIndex+1} 輪）`}</Text>
-          {preview.matches.length === 0 ? (
-            <Text style={{ color:'#ccc' }}>沒有可組成對戰的名單</Text>
-          ) : (
-            <View>
-              {preview.matches.map((m, index) => <MatchCard key={`m${index}`} m={m} idx={index} />)}
-            </View>
-          )}
-          {!!preview.waiting.length && (
-            <View style={{ marginTop:10, padding:10, backgroundColor:'#222', borderRadius:10 }}>
-              <Text style={{ color:'#ccc', marginBottom:4 }}>{`等待區（${preview.waiting.length}）`}</Text>
-              <Text style={{ color:'#ddd' }}>{String(preview.waiting.map((p:any)=>p.name).join('、 '))}</Text>
-            </View>
-          )}
-        </View>
-      )}
-
-      {/* 歷史輪摘要 */}
-      <View style={{ marginTop:16 }}>
-        <Text style={{ color:C.text, fontWeight:'700', marginBottom:8 }}>{`歷史輪（${rounds.length}）`}</Text>
-        {rounds.length === 0 ? (
-          <Text style={{ color:'#ccc' }}>尚無輪次</Text>
-        ) : (
-          rounds.map(r => {
-            const st = r.status || null;
-            const cs = statusChipStyle(st);
-            return (
-              <View key={r.id} style={{ padding:10, backgroundColor:C.card, borderRadius:10, borderColor:C.border, borderWidth:1, marginBottom:10 }}>
-                <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
-                  <Text style={{ color:C.text, fontWeight:'700' }}>{`第 ${r.index_no} 輪`}</Text>
-                  <View style={{ paddingVertical:4, paddingHorizontal:10, borderRadius:14, borderWidth:1, borderColor:cs.borderColor, backgroundColor:cs.bg }}>
-                    <Text style={{ color:cs.color }}>{`狀態：${statusLabel(st)}`}</Text>
-                  </View>
-                </View>
-
-                {(r.matches||[]).length === 0 ? (
-                  <Text style={{ color:'#ccc', marginTop:6 }}>（無資料）</Text>
-                ) : (
-                  (r.matches||[]).map((m: any, i:number) => (
-                    <View key={`${r.id}-${i}`} style={{ marginTop:6 }}>
-                      <Text style={{ color:'#90caf9' }}>
-                        {`場地 ${m.court_no}：`}
-                        {String((m.team_a?.players||[]).map((p:any)=>p.name).join('、'))}
-                        {'  vs  '}
-                        {String((m.team_b?.players||[]).map((p:any)=>p.name).join('、'))}
-                      </Text>
-                      <View style={{ flexDirection:'row', marginTop:6 }}>
-                        <Pressable
-                          onPress={()=>navigation.navigate('ClubScoreboard', { roundId: r.id, courtNo: m.court_no, courts: Number(courts || sessionDefaults.courts || 0) })}
-                          style={{ backgroundColor:'#1976d2', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8 }}
-                        >
-                          <Text style={{ color:'#fff' }}>啟動計分板</Text>
-                        </Pressable>
-                        {canPair && st === 'published' && (
-                          <Pressable onPress={()=>onMarkOngoing(r.id)} style={{ backgroundColor:'#2e7d32', paddingVertical:8, paddingHorizontal:12, borderRadius:8 }}>
-                            <Text style={{ color:'#fff' }}>開始本輪</Text>
-                          </Pressable>
-                        )}
-                        {canPair && st === 'ongoing' && (
-                          <Pressable onPress={()=>onMarkFinished(r.id)} style={{ backgroundColor:'#5d4037', paddingVertical:8, paddingHorizontal:12, borderRadius:8 }}>
-                            <Text style={{ color:'#fff' }}>結束本輪</Text>
-                          </Pressable>
-                        )}
-                      </View>
-                    </View>
-                  ))
-                )}
-              </View>
-            );
-          })
-        )}
-      </View>
-    </ScrollView>
-  );
+  const [a, r] = await Promise.all([listSessionAttendees(sid), listRounds(sid)]);
+  setAtts(a);
+  setRounds((r || []).map((x: RoundRow & { matches: RoundMatch[] }) => ({
+    id: x.id,
+    index_no: Number(x.index_no || 0),
+    status: (x as any).status ?? null,
+    matches: (x as any).matches || [],
+  })));
+} catch (e:any) {
+  Alert.alert('載入失敗', String(e?.message||e));
+} finally {
+  setLoading(false);
 }
+}, [sessionId]);
+
+React.useEffect(() => { loadAll(); }, [loadAll]);
+
+if (!sessionId) {
+return (
+<View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center', padding:16 }}>
+<Text style={{ color:C.text, fontSize:16 }}>未提供 sessionId</Text>
+</View>
+);
+}
+if (loading) {
+return (
+<View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center' }}>
+<ActivityIndicator color="#90caf9" />
+</View>
+);
+}
+
+const nowIndex = rounds.length ? Math.max(...rounds.map(r => Number(r.index_no||0))) : 0;
+
+function toLite(a: any) {
+return { id: a.buddy_id || a.id, name: a.display_name, level: a.level ?? undefined, gender: (a.gender as any) ?? 'U' };
+}
+
+async function genPreview() {
+if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可排點'); return; }
+setGenBusy(true);
+try {
+const candidates = atts.map(toLite);
+const cons: Constraints = {
+courts: Math.max(1, Number(courts||'1')),
+teamSize: (teamSize==='1' ? 1 : 2),
+partnerCooldown: Math.max(0, Number(partnerCooldown||'0')),
+opponentWindow: Math.max(0, Number(opponentWindow||'0')),
+maxLevelDiffPerPair: Math.max(0, Number(maxLevelDiffPerPair||'0')),
+preferMixedGender: !!preferMixed,
+restCooldown: Math.max(0, Number(restCooldown||'0')),  // 新增
+};
+const prevRounds = rounds.map(r => ({ index_no: Number(r.index_no||0), matches: r.matches || [] }));
+const res = pairRound(candidates, cons, prevRounds);
+setPreview({ matches: res.matches, waiting: res.waiting });
+} catch (e:any) {
+Alert.alert('產生失敗', String(e?.message || e));
+} finally {
+setGenBusy(false);
+}
+}
+
+async function publish() {
+if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可發布'); return; }
+if (!preview) {
+Alert.alert('提示', '請先產生預覽');
+return;
+}
+setPublishBusy(true);
+try {
+const sid = sessionId as string;
+const start = new Date();
+const end = new Date(start.getTime() + Math.max(5, Number(roundMinutes||'15')) * 60 * 1000);
+
+  const payload = {
+    index_no: nowIndex + 1,
+    start_at: start.toISOString(),
+    end_at: end.toISOString(),
+    status: 'published' as const,
+    matches: preview.matches.map((m, i) => ({
+      court_no: i+1,
+      team_a: { players: m.teamA.players, avgLevel: m.teamA.avgLevel },
+      team_b: { players: m.teamB.players, avgLevel: m.teamB.avgLevel },
+    })),
+  };
+  const newRoundId = await upsertRound(sid, payload);
+
+  try {
+    const rows = payload.matches.map((m) => ({
+      court_no: m.court_no,
+      team_a_ids: (m.team_a?.players || []).map((p:any) => p.id),
+      team_b_ids: (m.team_b?.players || []).map((p:any) => p.id),
+    }));
+    await upsertRoundCourts(newRoundId, rows);
+  } catch {}
+
+  try {
+    await supa.functions.invoke('send_notify', {
+      body: {
+        kind: 'event',
+        targetId: sid,
+        title: `第 ${nowIndex + 1} 輪已發布`,
+        body: '請留意看板與場地',
+        data: { sessionId: sid, roundId: newRoundId }
+      }
+    });
+  } catch {}
+
+  Alert.alert('已發布', `第 ${nowIndex + 1} 輪已建立`);
+  setPreview(null);
+  await loadAll();
+} catch (e:any) {
+  Alert.alert('發布失敗', String(e?.message || e));
+} finally {
+  setPublishBusy(false);
+}
+}
+
+const onSavePrefs = async () => {
+try {
+setSavingPrefs(true);
+const prefs: PairingPrefs = {
+courts, teamSize, roundMinutes,
+partnerCooldown, opponentWindow, maxLevelDiffPerPair,
+preferMixed,
+restCooldown,   // 新增
+};
+await savePrefs(sessionId!, prefs);
+Alert.alert('已儲存', '已記住這個場次的排點參數');
+} catch (e:any) {
+Alert.alert('儲存失敗', String(e?.message||e));
+} finally {
+setSavingPrefs(false);
+}
+};
+const onResetPrefs = async () => {
+try {
+setResettingPrefs(true);
+await clearPrefs(sessionId!);
+setCourts(String(Number(sessionDefaults.courts ?? 4)));
+setRoundMinutes(String(Number(sessionDefaults.round_minutes ?? 15)));
+setTeamSize('2');
+setPartnerCooldown('1');
+setOpponentWindow('1');
+setMaxLevelDiffPerPair('5');
+setPreferMixed(false);
+setRestCooldown('1');  // 新增
+Alert.alert('已還原', '已還原為場次預設（或系統預設）');
+} catch (e:any) {
+Alert.alert('還原失敗', String(e?.message||e));
+} finally {
+setResettingPrefs(false);
+}
+};
+
+const onMarkOngoing = async (roundId: string) => {
+if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可切換狀態'); return; }
+try { await setRoundStatus(roundId, 'ongoing'); await loadAll(); }
+catch (e:any){ Alert.alert('設定失敗', String(e?.message || e)); }
+};
+const onMarkFinished = async (roundId: string) => {
+if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可切換狀態'); return; }
+try { await setRoundStatus(roundId, 'finished'); await loadAll(); }
+catch (e:any){ Alert.alert('設定失敗', String(e?.message || e)); }
+};
 
 function Param({ title, v, setV }: { title:string; v:string; setV:(s:string)=>void }) {
-  return (
-    <View style={{ marginRight:8, marginBottom:8 }}>
-      <Text style={{ color:'#bbb', marginBottom:4 }}>{title}</Text>
-      <TextInput
-        value={v}
-        onChangeText={setV}
-        placeholderTextColor="#888"
-        style={{ width: 110, height: 36, borderWidth:1, borderColor:'#444', borderRadius:8, color:'#fff', paddingHorizontal:8, backgroundColor:'#111' }}
-      />
-    </View>
-  );
+return (
+<View style={{ marginRight:8, marginBottom:8 }}>
+<Text style={{ color:'#bbb', marginBottom:4 }}>{title}</Text>
+<TextInput
+value={v}
+onChangeText={setV}
+placeholderTextColor="#888"
+style={{ width: 130, height: 36, borderWidth:1, borderColor:'#444', borderRadius:8, color:'#fff', paddingHorizontal:8, backgroundColor:'#111' }}
+/>
+</View>
+);
 }
+
 function Btn({ text, onPress, disabled }: { text:string; onPress:()=>void; disabled?:boolean }) {
-  return (
-    <Pressable onPress={onPress} disabled={disabled} style={{ paddingVertical:10, paddingHorizontal:14, borderRadius:8, backgroundColor: disabled ? '#555' : '#1976d2' }}>
-      <Text style={{ color:'#fff', fontWeight:'700' }}>{text}</Text>
-    </Pressable>
-  );
+return (
+<Pressable onPress={onPress} disabled={disabled} style={{ paddingVertical:10, paddingHorizontal:14, borderRadius:8, backgroundColor: disabled ? '#555' : '#1976d2' }}>
+<Text style={{ color:'#fff', fontWeight:'700' }}>{text}</Text>
+</Pressable>
+);
+}
+
+const statusLabel = (s?: string|null) =>
+s === 'published' ? '已發布' :
+s === 'ongoing'  ? '進行中' :
+s === 'finished' ? '已結束' : '—';
+
+const statusChipStyle = (s?: string|null) => {
+const color =
+s === 'published' ? '#1976d2' :
+s === 'ongoing'  ? '#2e7d32' :
+s === 'finished' ? '#757575' : '#555';
+return { borderColor: color, bg: `${color}22`, color };
+};
+
+return (
+<ScrollView style={{ flex:1, backgroundColor:C.bg }} contentContainerStyle={{ padding:12 }}>
+<Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>
+社團排點{sessionDate ? `（${sessionDate}）` : ''}
+</Text>
+
+  <Text style={{ color:C.sub, marginBottom:6 }}>{`參與者（${atts.length}）`}</Text>
+
+  {/* 參數區 */}
+  <View style={{ padding:10, backgroundColor:C.card, borderRadius:10, borderColor:C.border, borderWidth:1, marginTop:10 }}>
+    <Text style={{ color:C.text, fontWeight:'700', marginBottom:8 }}>參數</Text>
+    <View style={{ flexDirection:'row', flexWrap:'wrap', opacity: canPair ? 1 : 0.5 }}>
+      <Param title="球場數" v={courts} setV={canPair?setCourts:()=>{}} />
+      <Param title="每輪(分)" v={roundMinutes} setV={canPair?setRoundMinutes:()=>{}} />
+      <Param title="單打(1)/雙打(2)" v={teamSize} setV={canPair?(s)=>setTeamSize((s==='1'?'1':'2')):()=>{}} />
+      <Param title="上/下場冷卻輪" v={restCooldown} setV={canPair?setRestCooldown:()=>{}} />{/* 新增 */}
+      <Param title="搭檔冷卻輪" v={partnerCooldown} setV={canPair?setPartnerCooldown:()=>{}} />
+      <Param title="對手避免(輪)" v={opponentWindow} setV={canPair?setOpponentWindow:()=>{}} />
+      <Param title="同隊等級差上限" v={maxLevelDiffPerPair} setV={canPair?setMaxLevelDiffPerPair:()=>{}} />
+    </View>
+
+    <View style={{ flexDirection:'row', flexWrap:'wrap', marginTop:8, opacity: canPair ? 1 : 0.5 }}>
+      <Pressable onPress={canPair?()=>setPreferMixed(v=>!v):()=>{}} style={{ padding:8, borderRadius:8, borderWidth:1, borderColor:C.border, marginRight:8 }}>
+        <Text style={{ color:'#90caf9' }}>{preferMixed ? '混雙偏好：開' : '混雙偏好：關'}</Text>
+      </Pressable>
+      {canPair && (
+        <>
+          <Pressable onPress={onSavePrefs} style={{ padding:8, borderRadius:8, backgroundColor:savingPrefs?'#555':'#1976d2', marginRight:8 }} disabled={savingPrefs}>
+            <Text style={{ color:'#fff' }}>{savingPrefs ? '儲存中…' : '儲存參數'}</Text>
+          </Pressable>
+          <Pressable onPress={onResetPrefs} style={{ padding:8, borderRadius:8, backgroundColor:resettingPrefs?'#555':'#455a64' }} disabled={resettingPrefs}>
+            <Text style={{ color:'#fff' }}>{resettingPrefs ? '還原中…' : '還原預設'}</Text>
+          </Pressable>
+        </>
+      )}
+    </View>
+  </View>
+
+  {/* 動作 */}
+  <View style={{ flexDirection:'row', marginTop:10 }}>
+    <Btn text={genBusy ? '產生中…' : '產生預覽'} onPress={genPreview} disabled={genBusy || !canPair} />
+    <View style={{ width:8 }} />
+    <Btn text={publishBusy ? '發布中…' : `發布第${nowIndex+1}輪`} onPress={publish} disabled={!preview || publishBusy || !canPair} />
+  </View>
+
+  {/* 預覽、歷史輪（省略，沿用你現有版面） */}
+  {/* ... 保持原內容 ... */}
+</ScrollView>
+);
 }ezbmt-tracked/src/screens/MatchesScreen.tsx
  
 import React from 'react';
@@ -7044,17 +6937,35 @@ setLoading(false);
 
 React.useEffect(()=>{ load(); }, [load]);
 
+function displayNameOf(item: Row): string {
+const n = (item.name && item.name.trim()) || '';
+if (n) return n;
+const e = (item.email && item.email.trim()) || '';
+if (e) return e.split('@')[0];
+return (item.user_id ? (item.user_id.slice(0, 8) + '…') : 'Anon');
+}
+
 async function ensureBuddyIdForUser(signup: Row): Promise<string> {
-// 嘗試用名字在 buddies 找一個同名；找不到就新增一筆
-const name = (signup.name && signup.name.trim()) || (signup.email ? String(signup.email).split('@')[0] : '未命名');
-// 先找
+// 用顯示名稱作為 buddy 名稱（避免未命名）
+const name = displayNameOf(signup);
+
 try {
-const { data: found } = await supa.from('buddies').select('id').eq('club_id', clubId).eq('name', name).maybeSingle();
-if (found?.id) return String(found.id);
+  const { data: found } = await supa
+    .from('buddies')
+    .select('id')
+    .eq('club_id', clubId)
+    .eq('name', name)
+    .maybeSingle();
+  if (found?.id) return String(found.id);
 } catch {}
-// 新增（帶 id 以免重名）
+
 const id = Math.random().toString(36).slice(2);
-const { error } = await supa.from('buddies').insert({ id, club_id: clubId, name, level: 5 });
+const { error } = await supa.from('buddies').insert({
+  id,
+  club_id: clubId,
+  name,
+  level: 5,
+});
 if (error) throw error;
 return id;
 }
@@ -7063,9 +6974,7 @@ async function approve(signup: Row) {
 setBusy(signup.id);
 try {
 const buddyId = await ensureBuddyIdForUser(signup);
-// 寫入報到名單
 await upsertSessionAttendee({ session_id: sessionId, buddy_id: buddyId } as any);
-// 刪除報名
 await deleteSignup(signup.id);
 await load();
 Alert.alert('已核准', '已加入報到名單');
@@ -7096,29 +7005,33 @@ return (
 );
 }
 
-const Item = ({ item }: { item: Row }) => (
-<View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:'#1e1e1e', borderRadius:10, marginBottom:10 }}>
-<Text style={{ color:'#fff', fontWeight:'700' }}>{item.name || '未命名'}</Text>
-<Text style={{ color:'#bbb', marginTop:2 }}>{item.email || ''}</Text>
-<Text style={{ color:'#888', marginTop:2 }}>{new Date(item.created_at).toLocaleString()}</Text>
-<View style={{ flexDirection:'row', marginTop:8 }}>
-<Pressable
-onPress={()=>approve(item)}
-disabled={busy===item.id}
-style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:8, backgroundColor: busy===item.id ? '#555' : C.btn, marginRight:8 }}
->
-<Text style={{ color:'#fff' }}>{busy===item.id?'處理中…':'核准（加入報到）'}</Text>
-</Pressable>
-<Pressable
-onPress={()=>reject(item)}
-disabled={busy===item.id}
-style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:8, backgroundColor: C.warn }}
->
-<Text style={{ color:'#fff' }}>刪除</Text>
-</Pressable>
-</View>
-</View>
+const Item = ({ item }: { item: Row }) => {
+const display = displayNameOf(item);
+
+return (
+  <View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:'#1e1e1e', borderRadius:10, marginBottom:10 }}>
+    <Text style={{ color:'#fff', fontWeight:'700' }}>{display}</Text>
+    {!!item.email && <Text style={{ color:'#bbb', marginTop:2 }}>{item.email}</Text>}
+    <Text style={{ color:'#888', marginTop:2 }}>{new Date(item.created_at).toLocaleString()}</Text>
+    <View style={{ flexDirection:'row', marginTop:8 }}>
+      <Pressable
+        onPress={()=>approve(item)}
+        disabled={busy===item.id}
+        style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:8, backgroundColor: busy===item.id ? '#555' : C.btn, marginRight:8 }}
+      >
+        <Text style={{ color:'#fff' }}>{busy===item.id?'處理中…':'核准（加入報到）'}</Text>
+      </Pressable>
+      <Pressable
+        onPress={()=>reject(item)}
+        disabled={busy===item.id}
+        style={{ paddingVertical:8, paddingHorizontal:12, borderRadius:8, backgroundColor: C.warn }}
+      >
+        <Text style={{ color:'#fff' }}>刪除</Text>
+      </Pressable>
+    </View>
+  </View>
 );
+};
 
 return (
 <View style={{ flex:1, backgroundColor:C.bg, padding:12 }}>
@@ -7126,9 +7039,7 @@ return (
 <FlatList data={items} keyExtractor={(i)=>i.id} renderItem={({ item }) => <Item item={item} />} />
 </View>
 );
-}
-
-ezbmt-tracked/src/screens/ReplayScreen.tsx
+}ezbmt-tracked/src/screens/ReplayScreen.tsx
  
 import React from 'react';
 import { View, Text, Alert, Pressable } from 'react-native';
@@ -8527,469 +8438,525 @@ import React from 'react';
 import { View, Text, FlatList, Pressable, Alert, ScrollView } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import {
-listSessions,
-listSessionAttendees,
-listRounds,
-createRound,
-listRoundCourts,
-upsertRoundCourts,
-getMyClubRole,
+  listSessions,
+  listSessionAttendees,
+  listRounds,
+  createRound,
+  listRoundCourts,
+  upsertRoundCourts,
+  getMyClubRole,
 } from '../db';
+import { supa } from '../lib/supabase';
 
 const C = { bg:'#111', card:'#1e1e1e', border:'#333', text:'#fff', sub:'#bbb', btn:'#1976d2', warn:'#d32f2f', gray:'#616161' };
 
 type CourtRow = { id?: string; court_no: number; team_a_ids: string[]; team_b_ids: string[] };
 
 export default function SessionPairingScreen() {
-const route = useRoute<any>();
-const navigation = useNavigation<any>();
-const sessionId = route.params?.sessionId as string;
-const clubId = route.params?.clubId as string;
+  const route = useRoute<any>();
+  const navigation = useNavigation<any>();
+  const sessionId = route.params?.sessionId as string;
+  const clubId = route.params?.clubId as string;
 
-const [attendees, setAttendees] = React.useState<Array<{ id:string; buddy_id:string; display_name:string }>>([]);
-const [rounds, setRounds] = React.useState<any[]>([]);
-const [currentRoundId, setCurrentRoundId] = React.useState<string | null>(null);
-const [courts, setCourts] = React.useState<CourtRow[]>([]);
-const [sessionMeta, setSessionMeta] = React.useState<{ courts: number; round_minutes: number; date: string } | null>(null);
+  const [attendees, setAttendees] = React.useState<Array<{ id:string; buddy_id:string; display_name:string }>>([]);
+  const [rounds, setRounds] = React.useState<any[]>([]);
+  const [currentRoundId, setCurrentRoundId] = React.useState<string | null>(null);
+  const [courts, setCourts] = React.useState<CourtRow[]>([]);
+  const [sessionMeta, setSessionMeta] = React.useState<{ courts: number; round_minutes: number; date: string } | null>(null);
 
-// 選取交換/填入
-const [pick, setPick] = React.useState<{ roundId: string; court: number; side: 'A'|'B'; idx: 0|1 } | null>(null);
+  const [pick, setPick] = React.useState<{ roundId: string; court: number; side: 'A'|'B'; idx: 0|1 } | null>(null);
 
-const [myRole, setMyRole] = React.useState<string | null>(null);
-const canPair = ['owner','admin','scheduler'].includes(String(myRole || ''));
+  const [myRole, setMyRole] = React.useState<string | null>(null);
+  const canPair = ['owner','admin','scheduler'].includes(String(myRole || ''));
 
-const load = React.useCallback(async ()=>{
-try {
-const [ss, as, rs] = await Promise.all([
-listSessions(clubId),
-listSessionAttendees(sessionId),
-listRounds(sessionId),
-]);
-const s = (ss || []).find((x:any)=>x.id === sessionId);
-if (s) setSessionMeta({ courts: Number(s.courts||0), round_minutes: Number(s.round_minutes||0), date: String(s.date||'') });
+  const load = React.useCallback(async ()=>{
+    try {
+      const [ss, as, rs] = await Promise.all([
+        listSessions(clubId),
+        listSessionAttendees(sessionId),
+        listRounds(sessionId),
+      ]);
+      const s = (ss || []).find((x:any)=>x.id === sessionId);
+      if (s) setSessionMeta({ courts: Number(s.courts||0), round_minutes: Number(s.round_minutes||0), date: String(s.date||'') });
 
-  // 正規化出席名單
-  const attList = (as || []).map((r:any)=> ({
-    id: String(r.id),
-    buddy_id: String(r.buddy_id || ''),
-    display_name: String(r.display_name || r.name || ''),
-  }));
-  setAttendees(attList);
+      const attList = (as || []).map((r:any)=> ({
+        id: String(r.id),
+        buddy_id: String(r.buddy_id || ''),
+        display_name: String(r.display_name || r.name || ''),
+      }));
+      setAttendees(attList);
 
-  setRounds(rs);
-  if (rs.length) {
-    const last = rs[rs.length-1];
-    setCurrentRoundId(last.id);
-    const rows = await listRoundCourts(last.id);
-    setCourts(normalizeCourts(rows));
-  } else {
-    setCurrentRoundId(null);
-    setCourts([]);
+      setRounds(rs);
+      if (rs.length) {
+        const last = rs[rs.length-1];
+        setCurrentRoundId(last.id);
+        const rows = await listRoundCourts(last.id);
+        setCourts(normalizeCourts(rows));
+      } else {
+        setCurrentRoundId(null);
+        setCourts([]);
+      }
+      try {
+        const r = await getMyClubRole(clubId);
+        setMyRole(r as any);
+      } catch { setMyRole(null); }
+    } catch (e:any) {
+      Alert.alert('載入失敗', String(e?.message||e));
+    }
+  }, [clubId, sessionId]);
+
+  React.useEffect(()=>{ load(); }, [load]);
+
+  function normalizeCourts(rows:any[]): CourtRow[] {
+    return (rows||[]).map((r:any)=>({
+      id: r.id,
+      court_no: Number(r.court_no||0),
+      team_a_ids: Array.isArray(r.team_a_ids) ? r.team_a_ids : (r.team_a_ids||[]),
+      team_b_ids: Array.isArray(r.team_b_ids) ? r.team_b_ids : (r.team_b_ids||[]),
+    })).sort((a,b)=>a.court_no-b.court_no);
   }
-  try {
-    const r = await getMyClubRole(clubId);
-    setMyRole(r as any);
-  } catch { setMyRole(null); }
-} catch (e:any) {
-  Alert.alert('載入失敗', String(e?.message||e));
-}
-}, [clubId, sessionId]);
 
-React.useEffect(()=>{ load(); }, [load]);
+  const nameOf = React.useCallback((id?: string) => {
+    if (!id) return '';
+    const a = attendees.find(x=>x.buddy_id === id);
+    return a?.display_name || id.slice(0,6)+'…';
+  }, [attendees]);
 
-function normalizeCourts(rows:any[]): CourtRow[] {
-return (rows||[]).map((r:any)=>({
-id: r.id,
-court_no: Number(r.court_no||0),
-team_a_ids: Array.isArray(r.team_a_ids) ? r.team_a_ids : (r.team_a_ids||[]),
-team_b_ids: Array.isArray(r.team_b_ids) ? r.team_b_ids : (r.team_b_ids||[]),
-})).sort((a,b)=>a.court_no-b.court_no);
-}
+  const assignedSet = React.useMemo(() => {
+    const s = new Set<string>();
+    courts.forEach(r => { r.team_a_ids.forEach(id => id && s.add(id)); r.team_b_ids.forEach(id => id && s.add(id)); });
+    return s;
+  }, [courts]);
 
-// 工具：buddyId -> 顯示名稱
-const nameOf = React.useCallback((id?: string) => {
-if (!id) return '';
-const a = attendees.find(x=>x.buddy_id === id);
-return a?.display_name || id.slice(0,6)+'…';
-}, [attendees]);
+  const waiting = React.useMemo(() => {
+    return attendees
+      .map(a => a.buddy_id)
+      .filter(id => id && !assignedSet.has(id));
+  }, [attendees, assignedSet]);
 
-// 目前所有已被分配的 buddy_id
-const assignedSet = React.useMemo(() => {
-const s = new Set<string>();
-courts.forEach(r => { r.team_a_ids.forEach(id => id && s.add(id)); r.team_b_ids.forEach(id => id && s.add(id)); });
-return s;
-}, [courts]);
+  function getSeat(row: CourtRow, side:'A'|'B', idx:0|1): string|undefined {
+    return side==='A' ? row.team_a_ids[idx] : row.team_b_ids[idx];
+  }
+  function setSeat(next: CourtRow[], courtNo:number, side:'A'|'B', idx:0|1, newId?: string): { next: CourtRow[]; prev?: string } {
+    const row = next.find(r=>r.court_no===courtNo);
+    if (!row) return { next };
+    if (side==='A') {
+      const prev = row.team_a_ids[idx];
+      row.team_a_ids[idx] = newId || undefined as any;
+      return { next, prev };
+    } else {
+      const prev = row.team_b_ids[idx];
+      row.team_b_ids[idx] = newId || undefined as any;
+      return { next, prev };
+    }
+  }
+  function removeBuddyEverywhere(next: CourtRow[], buddyId: string) {
+    next.forEach(r => {
+      r.team_a_ids = r.team_a_ids.map(x => x === buddyId ? undefined as any : x);
+      r.team_b_ids = r.team_b_ids.map(x => x === buddyId ? undefined as any : x);
+    });
+  }
 
-// 等待區（未被分配的）
-const waiting = React.useMemo(() => {
-return attendees
-.map(a => a.buddy_id)
-.filter(id => id && !assignedSet.has(id));
-}, [attendees, assignedSet]);
+  const selectSeat = (roundId: string, court: number, side: 'A'|'B', idx: 0|1) => {
+    if (!canPair) return;
+    const cur = pick;
+    if (!cur) { setPick({ roundId, court, side, idx }); return; }
+    if (cur.roundId !== roundId) { setPick({ roundId, court, side, idx }); return; }
+    if (cur.roundId===roundId && cur.court===court && cur.side===side && cur.idx===idx) { setPick(null); return; }
 
-// 取得/設定 指定座位
-function getSeat(row: CourtRow, side:'A'|'B', idx:0|1): string|undefined {
-return side==='A' ? row.team_a_ids[idx] : row.team_b_ids[idx];
-}
-function setSeat(next: CourtRow[], courtNo:number, side:'A'|'B', idx:0|1, newId?: string): { next: CourtRow[]; prev?: string } {
-const row = next.find(r=>r.court_no===courtNo);
-if (!row) return { next };
-if (side==='A') {
-const prev = row.team_a_ids[idx];
-row.team_a_ids[idx] = newId || undefined as any;
-return { next, prev };
-} else {
-const prev = row.team_b_ids[idx];
-row.team_b_ids[idx] = newId || undefined as any;
-return { next, prev };
-}
-}
-function removeBuddyEverywhere(next: CourtRow[], buddyId: string) {
-next.forEach(r => {
-r.team_a_ids = r.team_a_ids.map(x => x === buddyId ? undefined as any : x);
-r.team_b_ids = r.team_b_ids.map(x => x === buddyId ? undefined as any : x);
-});
-}
+    const next = courts.map(r => ({ ...r, team_a_ids:[...r.team_a_ids], team_b_ids:[...r.team_b_ids] }));
+    const aRow = next.find(r=>r.court_no===cur.court);
+    const bRow = next.find(r=>r.court_no===court);
+    if (!aRow || !bRow) { setPick(null); return; }
+    const aId = getSeat(aRow, cur.side, cur.idx);
+    const bId = getSeat(bRow, side, idx);
+    setSeat(next, cur.court, cur.side, cur.idx, bId);
+    setSeat(next, court, side, idx, aId);
+    setCourts(next);
+    setPick(null);
+  };
 
-// 選兩個座位互換；選一座位再挑「等待區」球友填入
-const selectSeat = (roundId: string, court: number, side: 'A'|'B', idx: 0|1) => {
-if (!canPair) return;
-const cur = pick;
-if (!cur) { setPick({ roundId, court, side, idx }); return; }
-// 同一輪
-if (cur.roundId !== roundId) { setPick({ roundId, court, side, idx }); return; }
-// 同座位 => 取消選取
-if (cur.roundId===roundId && cur.court===court && cur.side===side && cur.idx===idx) { setPick(null); return; }
+  const moveSeatToWaiting = (court:number, side:'A'|'B', idx:0|1) => {
+    if (!canPair) return;
+    const next = courts.map(r => ({ ...r, team_a_ids:[...r.team_a_ids], team_b_ids:[...r.team_b_ids] }));
+    setSeat(next, court, side, idx, undefined);
+    setCourts(next);
+    if (pick && pick.court===court && pick.side===side && pick.idx===idx) setPick(null);
+  };
 
-// 兩個座位交換
-const next = courts.map(r => ({ ...r, team_a_ids:[...r.team_a_ids], team_b_ids:[...r.team_b_ids] }));
-const aRow = next.find(r=>r.court_no===cur.court);
-const bRow = next.find(r=>r.court_no===court);
-if (!aRow || !bRow) { setPick(null); return; }
-const aId = getSeat(aRow, cur.side, cur.idx);
-const bId = getSeat(bRow, side, idx);
-setSeat(next, cur.court, cur.side, cur.idx, bId);
-setSeat(next, court, side, idx, aId);
-setCourts(next);
-setPick(null);
-};
+  const placeWaitingToSeat = (buddyId: string) => {
+    if (!canPair) return;
+    if (!pick) { Alert.alert('提示','請先點選一個座位，再從等待區挑人填入'); return; }
+    const next = courts.map(r => ({ ...r, team_a_ids:[...r.team_a_ids], team_b_ids:[...r.team_b_ids] }));
+    removeBuddyEverywhere(next, buddyId);
+    setSeat(next, pick.court, pick.side, pick.idx, buddyId);
+    setCourts(next);
+    setPick(null);
+  };
 
-// 將座位球友移到等待（清空座位）
-const moveSeatToWaiting = (court:number, side:'A'|'B', idx:0|1) => {
-if (!canPair) return;
-const next = courts.map(r => ({ ...r, team_a_ids:[...r.team_a_ids], team_b_ids:[...r.team_b_ids] }));
-setSeat(next, court, side, idx, undefined);
-setCourts(next);
-if (pick && pick.court===court && pick.side===side && pick.idx===idx) setPick(null);
-};
+  const autoFillSeats = () => {
+    if (!canPair) return;
+    const next = courts.map(r => ({ ...r, team_a_ids:[...r.team_a_ids], team_b_ids:[...r.team_b_ids] }));
+    const pool = waiting.slice();
+    const vacancies: Array<{ court:number; side:'A'|'B'; idx:0|1 }> = [];
+    next.forEach(r => {
+      (r.team_a_ids||[]).forEach((id, i)=>{ if (!id) vacancies.push({ court:r.court_no, side:'A', idx:i as 0|1 }); });
+      (r.team_b_ids||[]).forEach((id, i)=>{ if (!id) vacancies.push({ court:r.court_no, side:'B', idx:i as 0|1 }); });
+    });
+    vacancies.forEach(v => {
+      const b = pool.shift();
+      if (b) setSeat(next, v.court, v.side, v.idx, b);
+    });
+    setCourts(next);
+    setPick(null);
+  };
 
-// 從等待區填入目前選取的座位
-const placeWaitingToSeat = (buddyId: string) => {
-if (!canPair) return;
-if (!pick) { Alert.alert('提示','請先點選一個座位，再從等待區挑人填入'); return; }
-const next = courts.map(r => ({ ...r, team_a_ids:[...r.team_a_ids], team_b_ids:[...r.team_b_ids] }));
-removeBuddyEverywhere(next, buddyId);
-setSeat(next, pick.court, pick.side, pick.idx, buddyId);
-setCourts(next);
-setPick(null);
-};
+  const saveCourts = async () => {
+    if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可儲存配對'); return; }
+    try {
+      if (!currentRoundId) return;
+      await upsertRoundCourts(currentRoundId, courts);
+      Alert.alert('已儲存', '本輪配對已更新');
+    } catch (e:any) {
+      Alert.alert('儲存失敗', String(e?.message||e));
+    }
+  };
 
-// 自動補滿：將等待區依序填到所有空位
-const autoFillSeats = () => {
-if (!canPair) return;
-const next = courts.map(r => ({ ...r, team_a_ids:[...r.team_a_ids], team_b_ids:[...r.team_b_ids] }));
-const pool = waiting.slice(); // 依現在的等待順序
-// 找出空位列表
-const vacancies: Array<{ court:number; side:'A'|'B'; idx:0|1 }> = [];
-next.forEach(r => {
-(r.team_a_ids||[]).forEach((id, i)=>{ if (!id) vacancies.push({ court:r.court_no, side:'A', idx:i as 0|1 }); });
-(r.team_b_ids||[]).forEach((id, i)=>{ if (!id) vacancies.push({ court:r.court_no, side:'B', idx:i as 0|1 }); });
-});
-vacancies.forEach(v => {
-const b = pool.shift();
-if (b) setSeat(next, v.court, v.side, v.idx, b);
-});
-setCourts(next);
-setPick(null);
-};
-
-const saveCourts = async () => {
-if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可儲存配對'); return; }
-try {
-if (!currentRoundId) return;
-await upsertRoundCourts(currentRoundId, courts);
-Alert.alert('已儲存', '本輪配對已更新');
-} catch (e:any) {
-Alert.alert('儲存失敗', String(e?.message||e));
-}
-};
-
-// 產生下一輪（簡易）
-const generateNextRound = async () => {
-if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可產生下一輪'); return; }
-try {
-if (!sessionMeta) return;
-const rs = await listRounds(sessionId);
-const lastIndex = rs.length ? rs[rs.length-1].index_no : 0;
-const nextIndex = lastIndex + 1;
-const newRoundId = await createRound({ sessionId, indexNo: nextIndex });
-
-  const courtCount = Math.max(1, Number(sessionMeta.courts||1));
-  const rows = Array.from({ length: courtCount }, (_, i) => ({
-    court_no: i+1,
-    team_a_ids: [],
-    team_b_ids: [],
-  }));
-  await upsertRoundCourts(newRoundId, rows);
-
-  await load();
-  setCurrentRoundId(newRoundId);
-  const rc = await listRoundCourts(newRoundId);
-  setCourts(normalizeCourts(rc));
-  Alert.alert('成功', `已產生第 ${nextIndex} 輪（空場地）`);
-} catch (e:any) {
-  Alert.alert('產生失敗', String(e?.message||e));
-}
-};
-
-const openRound = async (roundId:string) => {
-try {
-setCurrentRoundId(roundId);
-const rows = await listRoundCourts(roundId);
-setCourts(normalizeCourts(rows));
-setPick(null);
-} catch (e:any) {
-Alert.alert('讀取失敗', String(e?.message||e));
-}
-};
-
-// UI 元件
-function Seat({ side, idx, id, court }: { side:'A'|'B'; idx:0|1; id?:string; court:number }) {
-const selected = pick && pick.roundId===currentRoundId && pick.court===court && pick.side===side && pick.idx===idx;
-return (
-<View style={{ flex:1, marginRight: idx===0 ? 8 : 0 }}>
-<Pressable
-onPress={()=>selectSeat(currentRoundId!, court, side, idx)}
-disabled={!canPair}
-style={{
-paddingVertical:10, borderWidth:2, borderColor: selected ? '#90caf9' : '#444',
-borderRadius:8, backgroundColor:'#2b2b2b', alignItems:'center', opacity: canPair?1:0.6
-}}
->
-<Text style={{ color:'#fff' }}>{nameOf(id)}</Text>
-</Pressable>
-<View style={{ flexDirection:'row', marginTop:6 }}>
-<Pressable onPress={()=>moveSeatToWaiting(court, side, idx)} disabled={!canPair || !id}
-style={{ paddingVertical:6, paddingHorizontal:8, borderRadius:6, borderWidth:1, borderColor:'#666', marginRight:6, opacity: (!canPair || !id)?0.5:1 }}>
-<Text style={{ color:'#ddd' }}>→等待</Text>
-</Pressable>
-<Pressable onPress={()=>{ // 清空
-if (!canPair) return;
-const next = courts.map(r => ({ ...r, team_a_ids:[...r.team_a_ids], team_b_ids:[...r.team_b_ids] }));
-setSeat(next, court, side, idx, undefined);
-setCourts(next);
-if (selected) setPick(null);
-}} disabled={!canPair || !id}
-style={{ paddingVertical:6, paddingHorizontal:8, borderRadius:6, borderWidth:1, borderColor:'#666', opacity: (!canPair || !id)?0.5:1 }}>
-<Text style={{ color:'#ddd' }}>清空</Text>
-</Pressable>
-</View>
-</View>
-);
-}
-
-function CourtCard({ item }: { item: CourtRow }) {
-return (
-<View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:10, marginBottom:10 }}>
-<Text style={{ color:C.text, fontWeight:'700', marginBottom:8 }}>第 {item.court_no} 場地</Text>
-<View style={{ flexDirection:'row', marginBottom:8 }}>
-<Seat side="A" idx={0} id={item.team_a_ids[0]} court={item.court_no} />
-<Seat side="A" idx={1} id={item.team_a_ids[1]} court={item.court_no} />
-</View>
-<View style={{ flexDirection:'row' }}>
-<Seat side="B" idx={0} id={item.team_b_ids[0]} court={item.court_no} />
-<Seat side="B" idx={1} id={item.team_b_ids[1]} court={item.court_no} />
-</View>
-<View style={{ flexDirection:'row', marginTop:10 }}>
-<Pressable
-onPress={()=>navigation.navigate('ClubScoreboard', { roundId: currentRoundId, courtNo: item.court_no, courts: Number(sessionMeta?.courts || 0) })}
-style={{ backgroundColor:C.btn, paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8 }}
->
-<Text style={{ color:'#fff' }}>啟動計分板</Text>
-</Pressable>
-</View>
-</View>
-);
-}
-
-const WaitingItem = ({ id }: { id:string }) => (
-<Pressable
-onPress={()=>placeWaitingToSeat(id)}
-disabled={!canPair || !pick}
-style={{ paddingVertical:8, paddingHorizontal:10, borderWidth:1, borderColor:'#555', borderRadius:8, backgroundColor:'#1f1f1f', marginRight:8, marginBottom:8, opacity: (!canPair || !pick) ? 0.6 : 1 }}
->
-<Text style={{ color:'#fff' }}>{nameOf(id)}</Text>
-</Pressable>
-);
-
-return (
-<View style={{ flex:1, backgroundColor:C.bg, padding:12 }}>
-<Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>排點（{sessionMeta?.date || ''}）</Text>
-
-  {/* 這一輪切換 */}
-  <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:10 }}>
-    {rounds.map((r:any)=>(
-      <Pressable
-        key={r.id}
-        onPress={()=>openRound(r.id)}
-        style={{
-          paddingVertical:6, paddingHorizontal:12, borderRadius:14,
-          borderWidth:1, borderColor: (currentRoundId===r.id)? '#90caf9':'#555',
-          backgroundColor: (currentRoundId===r.id)? 'rgba(144,202,249,0.15)':C.card,
-          marginRight:8, marginBottom:8
-        }}
-      >
-        <Text style={{ color:'#fff' }}>第 {r.index_no} 輪</Text>
-      </Pressable>
-    ))}
-
-    {canPair && (
-      <Pressable onPress={generateNextRound} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:14, backgroundColor:C.btn }}>
-        <Text style={{ color:'#fff' }}>產生下一輪</Text>
-      </Pressable>
-    )}
-  </View>
-
-  {/* 兩欄：左 = 場地、右 = 等待區 */}
-  <View style={{ flex:1, flexDirection:'row' }}>
-    {/* 左：本輪 courts */}
-    <View style={{ flex: 3, paddingRight: 8 }}>
-      <FlatList
-        data={courts}
-        keyExtractor={(i)=>String(i.court_no)}
-        renderItem={({ item }) => <CourtCard item={item} />}
-        ListFooterComponent={
-          currentRoundId ? (
-            <View style={{ marginTop:8, flexDirection:'row' }}>
-              {canPair && (
-                <>
-                  <Pressable onPress={saveCourts} style={{ backgroundColor:C.btn, paddingVertical:10, borderRadius:8, alignItems:'center', flex:1, marginRight:8 }}>
-                    <Text style={{ color:'#fff' }}>儲存本輪配對</Text>
-                  </Pressable>
-                  <Pressable onPress={autoFillSeats} style={{ backgroundColor:'#00695c', paddingVertical:10, borderRadius:8, alignItems:'center', flex:1 }}>
-                    <Text style={{ color:'#fff' }}>自動補滿</Text>
-                  </Pressable>
-                </>
-              )}
-              {!canPair && (
-                <View style={{ paddingVertical:10, borderRadius:8, alignItems:'center', flex:1, borderWidth:1, borderColor:'#444' }}>
-                  <Text style={{ color:'#888' }}>僅可檢視</Text>
-                </View>
-              )}
-            </View>
-          ) : null
+  // 新增：清空本輪
+  const clearCurrentRoundCourts = async () => {
+    if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可清空'); return; }
+    if (!currentRoundId) return;
+    Alert.alert('清空本輪', '確定要清空本輪所有場地的名單？', [
+      { text: '取消', style: 'cancel' },
+      { text: '清空', style: 'destructive', onPress: async () => {
+        try {
+          await supa.from('round_courts').delete().eq('round_id', currentRoundId);
+          const rows = await listRoundCourts(currentRoundId);
+          setCourts(normalizeCourts(rows));
+          setPick(null);
+          Alert.alert('已清空', '本輪名單已清除');
+        } catch (e:any) {
+          Alert.alert('清空失敗', String(e?.message || e));
         }
-      />
-    </View>
+      } }
+    ]);
+  };
 
-    {/* 右：等待區 */}
-    <View style={{ flex: 2, paddingLeft: 8 }}>
+  // 新增：從上一輪拷貝
+  const copyFromPreviousRound = async () => {
+    if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可拷貝'); return; }
+    if (!currentRoundId) return;
+    try {
+      // 找當前輪的 index_no
+      const cur = rounds.find((r:any)=> r.id === currentRoundId);
+      if (!cur) { Alert.alert('拷貝失敗','找不到目前輪'); return; }
+      const curIdxNo = Number(cur.index_no || 0);
+      const prev = rounds.find((r:any)=> Number(r.index_no||0) === (curIdxNo - 1));
+      if (!prev) { Alert.alert('沒有上一輪','目前是第一輪或找不到上一輪'); return; }
+
+      const prevRows = await listRoundCourts(prev.id);
+      const payload = (prevRows || []).map((r:any)=> ({
+        court_no: Number(r.court_no||0),
+        team_a_ids: Array.isArray(r.team_a_ids) ? r.team_a_ids : (r.team_a_ids||[]),
+        team_b_ids: Array.isArray(r.team_b_ids) ? r.team_b_ids : (r.team_b_ids||[]),
+      }));
+      if (!payload.length) { Alert.alert('上一輪沒有資料','上一輪無名單可拷貝'); return; }
+
+      await upsertRoundCourts(currentRoundId, payload);
+      const rows = await listRoundCourts(currentRoundId);
+      setCourts(normalizeCourts(rows));
+      setPick(null);
+      Alert.alert('已拷貝', '已從上一輪拷貝名單至本輪');
+    } catch (e:any) {
+      Alert.alert('拷貝失敗', String(e?.message || e));
+    }
+  };
+
+  const generateNextRound = async () => {
+    if (!canPair) { Alert.alert('沒有權限','僅 owner/admin/scheduler 可產生下一輪'); return; }
+    try {
+      const rs = rounds;
+      const lastIndex = rs.length ? rs[rs.length-1].index_no : 0;
+      const nextIndex = lastIndex + 1;
+      const newRoundId = await createRound({ sessionId, indexNo: nextIndex });
+
+      const courtCount = Math.max(1, Number(sessionMeta?.courts||1));
+      const rows = Array.from({ length: courtCount }, (_, i) => ({
+        court_no: i+1,
+        team_a_ids: [],
+        team_b_ids: [],
+      }));
+      await upsertRoundCourts(newRoundId, rows);
+
+      await load();
+      setCurrentRoundId(newRoundId);
+      const rc = await listRoundCourts(newRoundId);
+      setCourts(normalizeCourts(rc));
+      Alert.alert('成功', `已產生第 ${nextIndex} 輪（空場地）`);
+    } catch (e:any) {
+      Alert.alert('產生失敗', String(e?.message||e));
+    }
+  };
+
+  const openRound = async (roundId:string) => {
+    try {
+      setCurrentRoundId(roundId);
+      const rows = await listRoundCourts(roundId);
+      setCourts(normalizeCourts(rows));
+      setPick(null);
+    } catch (e:any) {
+      Alert.alert('讀取失敗', String(e?.message||e));
+    }
+  };
+
+  function Seat({ side, idx, id, court }: { side:'A'|'B'; idx:0|1; id?:string; court:number }) {
+    const selected = pick && pick.roundId===currentRoundId && pick.court===court && pick.side===side && pick.idx===idx;
+    return (
+      <View style={{ flex:1, marginRight: idx===0 ? 8 : 0 }}>
+        <Pressable
+          onPress={()=>selectSeat(currentRoundId!, court, side, idx)}
+          disabled={!canPair}
+          style={{
+            paddingVertical:10, borderWidth:2, borderColor: selected ? '#90caf9' : '#444',
+            borderRadius:8, backgroundColor:'#2b2b2b', alignItems:'center', opacity: canPair?1:0.6
+          }}
+        >
+          <Text style={{ color:'#fff' }}>{nameOf(id)}</Text>
+        </Pressable>
+        <View style={{ flexDirection:'row', marginTop:6 }}>
+          <Pressable onPress={()=>moveSeatToWaiting(court, side, idx)} disabled={!canPair || !id}
+            style={{ paddingVertical:6, paddingHorizontal:8, borderRadius:6, borderWidth:1, borderColor:'#666', marginRight:6, opacity: (!canPair || !id)?0.5:1 }}>
+            <Text style={{ color:'#ddd' }}>→等待</Text>
+          </Pressable>
+          <Pressable onPress={()=>{
+            if (!canPair) return;
+            const next = courts.map(r => ({ ...r, team_a_ids:[...r.team_a_ids], team_b_ids:[...r.team_b_ids] }));
+            setSeat(next, court, side, idx, undefined);
+            setCourts(next);
+            if (selected) setPick(null);
+          }} disabled={!canPair || !id}
+            style={{ paddingVertical:6, paddingHorizontal:8, borderRadius:6, borderWidth:1, borderColor:'#666', opacity: (!canPair || !id)?0.5:1 }}>
+            <Text style={{ color:'#ddd' }}>清空</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  function CourtCard({ item }: { item: CourtRow }) {
+    return (
       <View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:10, marginBottom:10 }}>
-        <Text style={{ color:'#fff', fontWeight:'700', marginBottom:6 }}>等待區（{waiting.length}）</Text>
-        {waiting.length === 0 ? (
-          <Text style={{ color:'#888' }}>目前沒有等待中的球友</Text>
-        ) : (
-          <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
-            {waiting.map(id => <WaitingItem key={id} id={id} />)}
-          </View>
-        )}
-        {pick ? (
-          <Text style={{ color:'#90caf9', marginTop:6 }}>已選座位：第 {pick.court} 場地 {pick.side}#{pick.idx+1}（點等待區球友以填入）</Text>
-        ) : (
-          <Text style={{ color:'#888', marginTop:6 }}>先在左側點選一個座位，再從這裡選人</Text>
+        <Text style={{ color:C.text, fontWeight:'700', marginBottom:8 }}>第 {item.court_no} 場地</Text>
+        <View style={{ flexDirection:'row', marginBottom:8 }}>
+          <Seat side="A" idx={0} id={item.team_a_ids[0]} court={item.court_no} />
+          <Seat side="A" idx={1} id={item.team_a_ids[1]} court={item.court_no} />
+        </View>
+        <View style={{ flexDirection:'row' }}>
+          <Seat side="B" idx={0} id={item.team_b_ids[0]} court={item.court_no} />
+          <Seat side="B" idx={1} id={item.team_b_ids[1]} court={item.court_no} />
+        </View>
+        <View style={{ flexDirection:'row', marginTop:10 }}>
+          <Pressable
+            onPress={()=>navigation.navigate('ClubScoreboard', { roundId: currentRoundId, courtNo: item.court_no, courts: Number(sessionMeta?.courts || 0) })}
+            style={{ backgroundColor:C.btn, paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8 }}
+          >
+            <Text style={{ color:'#fff' }}>啟動計分板</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  const WaitingItem = ({ id }: { id:string }) => (
+    <Pressable
+      onPress={()=>placeWaitingToSeat(id)}
+      disabled={!canPair || !pick}
+      style={{ paddingVertical:8, paddingHorizontal:10, borderWidth:1, borderColor:'#555', borderRadius:8, backgroundColor:'#1f1f1f', marginRight:8, marginBottom:8, opacity: (!canPair || !pick) ? 0.6 : 1 }}
+    >
+      <Text style={{ color:'#fff' }}>{nameOf(id)}</Text>
+    </Pressable>
+  );
+
+  return (
+    <View style={{ flex:1, backgroundColor:C.bg, padding:12 }}>
+      <Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>排點（{sessionMeta?.date || ''}）</Text>
+
+      <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:10 }}>
+        {rounds.map((r:any)=>(
+          <Pressable
+            key={r.id}
+            onPress={()=>openRound(r.id)}
+            style={{
+              paddingVertical:6, paddingHorizontal:12, borderRadius:14,
+              borderWidth:1, borderColor: (currentRoundId===r.id)? '#90caf9':'#555',
+              backgroundColor: (currentRoundId===r.id)? 'rgba(144,202,249,0.15)':C.card,
+              marginRight:8, marginBottom:8
+            }}
+          >
+            <Text style={{ color:'#fff' }}>第 {r.index_no} 輪</Text>
+          </Pressable>
+        ))}
+
+        {canPair && (
+          <Pressable onPress={generateNextRound} style={{ paddingVertical:6, paddingHorizontal:12, borderRadius:14, backgroundColor:C.btn }}>
+            <Text style={{ color:'#fff' }}>產生下一輪</Text>
+          </Pressable>
         )}
       </View>
+
+      <View style={{ flex:1, flexDirection:'row' }}>
+        <View style={{ flex: 3, paddingRight: 8 }}>
+          <FlatList
+            data={courts}
+            keyExtractor={(i)=>String(i.court_no)}
+            renderItem={({ item }) => <CourtCard item={item} />}
+            ListFooterComponent={
+              currentRoundId ? (
+                <View style={{ marginTop:8 }}>
+                  {canPair ? (
+                    <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
+                      <Pressable onPress={saveCourts} style={{ backgroundColor:C.btn, paddingVertical:10, borderRadius:8, alignItems:'center', flexBasis:'48%', marginRight:'4%', marginBottom:8 }}>
+                        <Text style={{ color:'#fff' }}>儲存本輪配對</Text>
+                      </Pressable>
+                      <Pressable onPress={autoFillSeats} style={{ backgroundColor:'#00695c', paddingVertical:10, borderRadius:8, alignItems:'center', flexBasis:'48%', marginBottom:8 }}>
+                        <Text style={{ color:'#fff' }}>自動補滿</Text>
+                      </Pressable>
+                      <Pressable onPress={clearCurrentRoundCourts} style={{ backgroundColor:'#8d6e63', paddingVertical:10, borderRadius:8, alignItems:'center', flexBasis:'48%', marginRight:'4%', marginBottom:8 }}>
+                        <Text style={{ color:'#fff' }}>清空本輪</Text>
+                      </Pressable>
+                      <Pressable onPress={copyFromPreviousRound} style={{ backgroundColor:'#5c6bc0', paddingVertical:10, borderRadius:8, alignItems:'center', flexBasis:'48%', marginBottom:8 }}>
+                        <Text style={{ color:'#fff' }}>從上一輪拷貝</Text>
+                      </Pressable>
+                    </View>
+                  ) : (
+                    <View style={{ paddingVertical:10, borderRadius:8, alignItems:'center', borderWidth:1, borderColor:'#444' }}>
+                      <Text style={{ color:'#888' }}>僅可檢視</Text>
+                    </View>
+                  )}
+                </View>
+              ) : null
+            }
+          />
+        </View>
+
+        <View style={{ flex: 2, paddingLeft: 8 }}>
+          <View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:10, marginBottom:10 }}>
+            <Text style={{ color:'#fff', fontWeight:'700', marginBottom:6 }}>等待區（{waiting.length}）</Text>
+            {waiting.length === 0 ? (
+              <Text style={{ color:'#888' }}>目前沒有等待中的球友</Text>
+            ) : (
+              <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
+                {waiting.map(id => <WaitingItem key={id} id={id} />)}
+              </View>
+            )}
+            {pick ? (
+              <Text style={{ color:'#90caf9', marginTop:6 }}>已選座位：第 {pick.court} 場地 {pick.side}#{pick.idx+1}（點等待區球友以填入）</Text>
+            ) : (
+              <Text style={{ color:'#888', marginTop:6 }}>先在左側點選一個座位，再從這裡選人</Text>
+            )}
+          </View>
+        </View>
+      </View>
     </View>
-  </View>
-</View>
-);
-}ezbmt-tracked/src/screens/ClubBoardScreen.tsx
+  );
+}
+ezbmt-tracked/src/screens/ClubBoardScreen.tsx
  
 import React from 'react';
-import { View, Text, ScrollView, Pressable, ActivityIndicator, StatusBar } from 'react-native';
-import { useRoute } from '@react-navigation/native';
+import { View, Text, ScrollView, Pressable, ActivityIndicator, StatusBar, Alert } from 'react-native';
+import { useRoute, useNavigation } from '@react-navigation/native';
 import { listProjection } from '../db';
 import { supa } from '../lib/supabase';
+import { exportSessionCsv, exportSessionPdf } from '../lib/exportSession';
 
-const C = { bg: '#111', card: '#1e1e1e', border: '#333', text: '#fff', sub: '#bbb' };
+const C = { bg: '#111', card: '#1e1e1e', border: '#333', text: '#fff', sub: '#bbb', btn: '#1976d2' };
 
 type MatchItem = {
 court_no: number;
-team_a: { players: Array<{ id:string; name:string; level?:number }> };
-team_b: { players: Array<{ id:string; name:string; level?:number }> };
+team_a: { players: Array<{ id:string; name:string }> };
+team_b: { players: Array<{ id:string; name:string }> };
 };
-
 type Projection = {
 server_time: string;
-now?: { index: number; start_at?: string|null; end_at?: string|null; matches: MatchItem[] } | null;
 next?: { index: number; planned_start_at?: string|null; matchesPreview: MatchItem[] } | null;
 };
 
-type InProgressCard = {
-roundIndex: number;
+type CourtNames = { aNames: string[]; bNames: string[] };
+type CourtDisplay = {
 courtNo: number;
-aNames: string[];
-bNames: string[];
-scoreA: number;
-scoreB: number;
+current?: { roundIndex: number; roundId: string; names: CourtNames };
+next?: { roundIndex: number; roundId: string; names: CourtNames };
 };
 
 export default function ClubBoardScreen() {
 const route = useRoute<any>();
+const navigation = useNavigation<any>();
 const sessionId: string | undefined = route.params?.sessionId;
 
 const [loading, setLoading] = React.useState(true);
 const [proj, setProj] = React.useState<Projection | null>(null);
-const [countdown, setCountdown] = React.useState<string>('');
 const [offsetMs, setOffsetMs] = React.useState<number>(0);
+const [countdown, setCountdown] = React.useState<string>('');
+
+const [courts, setCourts] = React.useState<number>(0);
+const [perCourt, setPerCourt] = React.useState<CourtDisplay[]>([]);
 const [refreshing, setRefreshing] = React.useState(false);
 
-// 新增：所有輪的「進行中（未結束）」卡片
-const [inProgress, setInProgress] = React.useState<InProgressCard[]>([]);
-
-React.useEffect(() => { if (sessionId) fetchAll(); }, [sessionId]);
-React.useEffect(() => { const t = setInterval(() => tick(), 1000); return () => clearInterval(t); }, [proj, offsetMs]);
-React.useEffect(() => { const t = setInterval(() => fetchAll().catch(()=>{}), 5000); return () => clearInterval(t); }, [sessionId]);
-React.useEffect(() => {
-if (!sessionId) return;
-let channel: ReturnType<typeof supa.channel> | null = null;
-(async () => {
-try {
-channel = supa
-.channel('club-board-' + sessionId)
-.on('postgres_changes', { event: '*', schema: 'public', table: 'round_results' }, () => fetchAll().catch(()=>{}))
-.subscribe();
-} catch {}
-})();
-return () => { if (channel) channel.unsubscribe(); };
-}, [sessionId]);
-
-async function fetchAll() {
+const fetchAll = React.useCallback(async () => {
 if (!sessionId) return;
 setRefreshing(true);
 try {
-// 1) listProjection 取 next/伺服器時間
-const data = await listProjection(sessionId);
-setProj(data);
-try { const server = new Date(data?.server_time || new Date()); setOffsetMs(server.getTime()-Date.now()); } catch {}
-// 2) 取所有輪未結束的場地（進行中）
-const cards = await fetchInProgressCards(sessionId);
-setInProgress(cards);
+let courtCount = 0;
+try {
+const { data: srow } = await supa.from('sessions').select('courts').eq('id', sessionId).maybeSingle();
+courtCount = Number(srow?.courts || 0) || 0;
+} catch {}
+setCourts(courtCount);
+
+  try {
+    const data = await listProjection(sessionId);
+    setProj(data as any);
+    const server = new Date((data as any)?.server_time || new Date());
+    setOffsetMs(server.getTime() - Date.now());
+  } catch {
+    setProj(null);
+    setOffsetMs(0);
+  }
+
+  const pc = await buildPerCourtDisplays(sessionId, courtCount);
+  setPerCourt(pc);
 } finally {
-setLoading(false);
-setRefreshing(false);
+  setLoading(false);
+  setRefreshing(false);
 }
-}
+}, [sessionId]);
+
+React.useEffect(() => {
+if (!sessionId) return;
+fetchAll().catch(()=>{});
+
+let channel: any = null;
+try {
+  channel = supa
+    .channel('club-board-' + sessionId)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'round_results' }, () => fetchAll().catch(()=>{}))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'round_courts' }, () => fetchAll().catch(()=>{}))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'round_matches' }, () => fetchAll().catch(()=>{}))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'session_rounds' }, () => fetchAll().catch(()=>{}))
+    .subscribe();
+} catch {}
+
+const t = setInterval(() => fetchAll().catch(()=>{}), 5000);
+return () => {
+  clearInterval(t);
+  try { channel?.unsubscribe(); } catch {}
+};
+}, [sessionId, fetchAll]);
+
+React.useEffect(() => {
+const t = setInterval(() => tick(), 1000);
+return () => clearInterval(t);
+}, [proj, offsetMs]);
 
 function tick() {
 const n = proj?.next?.planned_start_at ? new Date(proj.next.planned_start_at) : null;
@@ -9000,71 +8967,6 @@ const s = Math.floor(diff / 1000);
 const mm = String(Math.floor(s/60)).padStart(2,'0');
 const ss = String(s%60).padStart(2,'0');
 setCountdown(`${mm}:${ss}`);
-}
-
-// 查出所有「未結束」的場地（跨所有輪）
-async function fetchInProgressCards(sid: string): Promise<InProgressCard[]> {
-// 所有輪
-const { data: rounds } = await supa
-.from('session_rounds')
-.select('id,index_no')
-.eq('session_id', sid)
-.order('index_no', { ascending: true });
-
-const rlist = (rounds || []).map((r:any)=>({ id:String(r.id), index:Number(r.index_no||0) }));
-if (!rlist.length) return [];
-
-const roundIds = rlist.map(r => r.id);
-
-// 這些輪中「有進度但未 finished」的場地：serve_state_json 不為空且 finished_at 為空
-const { data: rr } = await supa
-  .from('round_results')
-  .select('round_id,court_no,serve_state_json,finished_at')
-  .in('round_id', roundIds as any)
-  .is('finished_at', null)
-  .not('serve_state_json', 'is', null);
-
-if (!rr || !rr.length) return [];
-
-// 撈一次這些輪的 round_matches，用來取球員名稱
-const { data: rms } = await supa
-  .from('round_matches')
-  .select('round_id,court_no,team_a,team_b')
-  .in('round_id', roundIds as any);
-
-const matchMap = new Map<string, { aNames:string[], bNames:string[] }>();
-(rms||[]).forEach((m:any) => {
-  const key = `${m.round_id}#${m.court_no}`;
-  const aNames = ((m.team_a?.players)||[]).map((p:any)=> String(p?.name || ''));
-  const bNames = ((m.team_b?.players)||[]).map((p:any)=> String(p?.name || ''));
-  matchMap.set(key, { aNames, bNames });
-});
-
-// 轉換為卡片
-const parse = (st:any) => {
-  const games = st?.games || [];
-  const cur = games[st?.currentGameIndex ?? 0] || null;
-  const pts = Array.isArray(cur?.points) ? cur.points : [0,0];
-  return { a:Number(pts[0]||0), b:Number(pts[1]||0) };
-};
-
-const ridToIndex = new Map<string, number>(rlist.map(r=>[r.id, r.index]));
-const cards: InProgressCard[] = (rr||[]).map((row:any)=> {
-  const key = `${row.round_id}#${row.court_no}`;
-  const ref = matchMap.get(key) || { aNames:[''], bNames:[''] };
-  const sc = parse(row.serve_state_json || {});
-  return {
-    roundIndex: ridToIndex.get(String(row.round_id)) || 0,
-    courtNo: Number(row.court_no||0),
-    aNames: ref.aNames,
-    bNames: ref.bNames,
-    scoreA: sc.a, scoreB: sc.b,
-  };
-});
-
-// 依輪序/場地排序
-cards.sort((x,y)=> (x.roundIndex===y.roundIndex ? (x.courtNo - y.courtNo) : (x.roundIndex - y.roundIndex)));
-return cards;
 }
 
 if (!sessionId || loading) {
@@ -9078,53 +8980,120 @@ return (
 const next = proj?.next;
 const nextMatches = next?.matchesPreview || [];
 
+const doExportCsv = async () => {
+try {
+await exportSessionCsv(sessionId!);
+} catch (e: any) {
+Alert.alert('匯出失敗', String(e?.message || e));
+}
+};
+const doExportPdf = async () => {
+try {
+await exportSessionPdf(sessionId!);
+} catch (e: any) {
+Alert.alert('匯出失敗', String(e?.message || e));
+}
+};
+
 return (
 <View style={{ flex:1, backgroundColor:C.bg }}>
 <StatusBar barStyle="light-content" />
 <ScrollView contentContainerStyle={{ padding: 12 }}>
-{/* 進行中（跨所有輪） */}
-<Text style={{ color:'#fff', fontSize: 20, fontWeight:'800', marginBottom: 8 }}>進行中（未結束）</Text>
-{inProgress.length === 0 ? (
-<Text style={{ color: '#888', marginBottom: 14 }}>目前沒有進行中的對戰</Text>
-) : (
-<View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
-{inProgress.map((m, idx) => (
-<View key={'prog-'+idx} style={{
-width: '49%',
-minWidth: 280,
-padding: 12,
-backgroundColor: '#1f1f1f',
-borderRadius: 12,
-borderWidth: 1,
-borderColor: '#333',
-marginBottom: 10,
-}}>
-<Text style={{ color:'#fff', fontSize: 18, fontWeight:'800', marginBottom: 8 }}>
-第 {m.roundIndex} 輪 · 場地 {m.courtNo}
+{/* 全域倒數 + 匯出鈕 */}
+<View style={{ flexDirection:'row', alignItems:'center', marginBottom: 6 }}>
+<Text style={{ color:'#fff', fontSize: 20, fontWeight:'800', flex: 1 }}>
+{next ? `下一輪（全域）：第 ${next.index} 輪` : '下一輪（全域） ─'}
 </Text>
-<Text style={{ color:'#90caf9', fontSize: 16, fontWeight:'700' }}>
-{m.aNames.join('、 ')}
-</Text>
-<Text style={{ color:'#ddd', marginVertical: 6, fontSize: 16, textAlign: 'center' }}>
-VS （{m.scoreA}:{m.scoreB}）
-</Text>
-<Text style={{ color:'#ef9a9a', fontSize: 16, fontWeight:'700' }}>
-{m.bNames.join('、 ')}
-</Text>
+<Pressable onPress={doExportCsv} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:8, backgroundColor:'#0288d1', marginRight:8 }}>
+<Text style={{ color:'#fff' }}>匯出 CSV</Text>
+</Pressable>
+<Pressable onPress={doExportPdf} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:8, backgroundColor:'#5c6bc0' }}>
+<Text style={{ color:'#fff' }}>匯出 PDF</Text>
+</Pressable>
 </View>
-))}
-</View>
-)}
 
-    {/* 下一輪倒數與預覽（沿用 projection） */}
-    <Text style={{ color:'#fff', fontSize: 20, fontWeight:'800', marginTop:10, marginBottom:6 }}>
-      {next ? `下一輪：第 ${next.index} 輪` : '下一輪 ─'}
-    </Text>
     {!!countdown && (
       <Text style={{ color:'#ffecb3', fontSize: 36, fontWeight: '800', marginBottom: 8 }}>
         開賽倒數 {countdown}
       </Text>
     )}
+
+    <Text style={{ color:'#fff', fontSize: 20, fontWeight:'800', marginTop:10, marginBottom:8 }}>目前各場地名單（逐場地前進）</Text>
+    {courts <= 0 ? (
+      <Text style={{ color:'#888' }}>本場次未設定球場數</Text>
+    ) : perCourt.length === 0 ? (
+      <Text style={{ color:'#888' }}>尚無輪次</Text>
+    ) : (
+      <View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
+        {perCourt.map((c) => (
+          <View key={'court-'+c.courtNo} style={{
+            width: '49%',
+            minWidth: 280,
+            padding: 12,
+            backgroundColor: '#1f1f1f',
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: '#333',
+            marginBottom: 10,
+          }}>
+            <Text style={{ color:'#fff', fontSize: 18, fontWeight:'800', marginBottom: 8 }}>
+              場地 {c.courtNo}
+            </Text>
+
+            {c.current ? (
+              <>
+                <Text style={{ color:'#bbb', marginBottom: 4 }}>目前：第 {c.current.roundIndex} 輪</Text>
+                <Text style={{ color:'#90caf9', fontSize: 16, fontWeight: '700' }}>
+                  {c.current.names.aNames.join('、 ')}
+                </Text>
+                <Text style={{ color:'#ddd', marginVertical: 6, fontSize: 16, textAlign: 'center' }}>
+                  VS
+                </Text>
+                <Text style={{ color:'#ef9a9a', fontSize: 16, fontWeight: '700' }}>
+                  {c.current.names.bNames.join('、 ')}
+                </Text>
+
+                <View style={{ marginTop: 10 }}>
+                  <Pressable
+                    onPress={() => {
+                      navigation.navigate('ClubScoreboard', {
+                        roundId: c.current!.roundId,
+                        courtNo: c.courtNo,
+                        courts: courts,
+                      });
+                    }}
+                    style={{ paddingVertical: 8, paddingHorizontal: 12, backgroundColor: C.btn, borderRadius: 8 }}
+                  >
+                    <Text style={{ color:'#fff' }}>啟動計分板</Text>
+                  </Pressable>
+                </View>
+              </>
+            ) : (
+              <Text style={{ color:'#888' }}>目前：無（此場地所有輪已結束）</Text>
+            )}
+
+            {c.next ? (
+              <View style={{ marginTop: 8 }}>
+                <Text style={{ color:'#bbb', marginBottom: 4 }}>預告：第 {c.next.roundIndex} 輪</Text>
+                <Text style={{ color:'#90caf9' }}>
+                  {c.next.names.aNames.join('、 ')}
+                </Text>
+                <Text style={{ color:'#ddd', textAlign: 'center', marginVertical: 4 }}>VS</Text>
+                <Text style={{ color:'#ef9a9a' }}>
+                  {c.next.names.bNames.join('、 ')}
+                </Text>
+              </View>
+            ) : (
+              <Text style={{ color:'#555', marginTop: 8 }}>預告：—</Text>
+            )}
+          </View>
+        ))}
+      </View>
+    )}
+
+    <Text style={{ color:'#fff', fontSize: 20, fontWeight:'800', marginTop:10, marginBottom:6 }}>
+      全域下一輪預覽
+    </Text>
     {nextMatches.length > 0 ? (
       <View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
         {nextMatches.map((m, idx) => (
@@ -9146,12 +9115,117 @@ VS （{m.scoreA}:{m.scoreB}）
         ))}
       </View>
     ) : (
-      <Text style={{ color:'#888' }}>尚無預覽對戰</Text>
+      <Text style={{ color: '#888' }}>尚無預覽對戰</Text>
     )}
   </ScrollView>
 </View>
 );
 }
+
+async function buildPerCourtDisplays(sessionId: string, courts: number): Promise<CourtDisplay[]> {
+const out: CourtDisplay[] = [];
+if (!sessionId || courts <= 0) return out;
+
+const { data: rounds } = await supa
+.from('session_rounds')
+.select('id,index_no')
+.eq('session_id', sessionId)
+.order('index_no', { ascending: true });
+
+const rlist = (rounds || []).map((r:any) => ({ id: String(r.id), index: Number(r.index_no || 0) }));
+if (!rlist.length) return out;
+
+const roundIds = rlist.map(r => r.id);
+
+const { data: rr } = await supa
+.from('round_results')
+.select('round_id,court_no,finished_at')
+.in('round_id', roundIds as any);
+
+const finished = new Set<string>();
+(rr || []).forEach((row:any) => {
+const fin = !!row.finished_at;
+if (fin) finished.add(keyRC(row.round_id, Number(row.court_no)));
+});
+
+const { data: rms } = await supa
+.from('round_matches')
+.select('round_id,court_no,team_a,team_b')
+.in('round_id', roundIds as any);
+
+const matchMap = new Map<string, CourtNames>();
+(rms || []).forEach((m:any) => {
+const key = keyRC(m.round_id, Number(m.court_no));
+const aNames = ((m.team_a?.players)||[]).map((p:any)=> String(p?.name || ''));
+const bNames = ((m.team_b?.players)||[]).map((p:any)=> String(p?.name || ''));
+matchMap.set(key, { aNames, bNames });
+});
+
+const { data: rcs } = await supa
+.from('round_courts')
+.select('round_id,court_no,team_a_ids,team_b_ids')
+.in('round_id', roundIds as any);
+
+const courtsMap = new Map<string, { aIds: string[]; bIds: string[] }>();
+const allIds = new Set<string>();
+(rcs || []).forEach((row:any) => {
+const key = keyRC(row.round_id, Number(row.court_no));
+const aIds = Array.isArray(row.team_a_ids) ? row.team_a_ids.map(String) : [];
+const bIds = Array.isArray(row.team_b_ids) ? row.team_b_ids.map(String) : [];
+courtsMap.set(key, { aIds, bIds });
+aIds.concat(bIds).forEach((id:string)=> allIds.add(id));
+});
+
+let buddyName: Record<string,string> = {};
+if (allIds.size > 0) {
+const ids = Array.from(allIds);
+const { data: buds } = await supa
+.from('buddies')
+.select('id,name')
+.in('id', ids as any);
+buddyName = Object.fromEntries((buds||[]).map((b:any)=> [String(b.id), String(b.name || '')]));
+}
+
+const namesOf = (roundId: string, courtNo: number): CourtNames => {
+const k = keyRC(roundId, courtNo);
+const direct = matchMap.get(k);
+if (direct) return direct;
+const co = courtsMap.get(k);
+if (!co) return { aNames: [], bNames: [] };
+const mapNames = (ids: string[]) => ids.map(id => buddyName[id] || (id ? id.slice(0,6)+'…' : ''));
+return { aNames: mapNames(co.aIds), bNames: mapNames(co.bIds) };
+};
+
+for (let c = 1; c <= courts; c++) {
+let curIdx = -1;
+for (let i = 0; i < rlist.length; i++) {
+const r = rlist[i];
+const done = finished.has(keyRC(r.id, c));
+if (!done) { curIdx = i; break; }
+}
+
+let cur: CourtDisplay['current'] | undefined = undefined;
+let nxt: CourtDisplay['next'] | undefined = undefined;
+
+if (curIdx >= 0) {
+  const r = rlist[curIdx];
+  cur = { roundIndex: r.index, roundId: r.id, names: namesOf(r.id, c) };
+  if (curIdx + 1 < rlist.length) {
+    const n = rlist[curIdx + 1];
+    nxt = { roundIndex: n.index, roundId: n.id, names: namesOf(n.id, c) };
+  }
+} else {
+  cur = undefined;
+  nxt = undefined;
+}
+
+out.push({ courtNo: c, current: cur, next: nxt });
+}
+
+return out;
+}
+
+function keyRC(roundId: string, courtNo: number) { return `${roundId}#${courtNo}`; }
 
 ezbmt-tracked/src/screens/ClubMediaScreen.tsx
  
@@ -11416,211 +11490,307 @@ import { supa } from '../lib/supabase';
 const C = { bg: '#111', card: '#1e1e1e', border: '#333', text: '#fff', sub: '#bbb' };
 
 type MatchItem = {
-court_no: number;
-team_a: { players: Array<{ id:string; name:string; level?:number }> };
-team_b: { players: Array<{ id:string; name:string; level?:number }> };
+  court_no: number;
+  team_a: { players: Array<{ id:string; name:string }> };
+  team_b: { players: Array<{ id:string; name:string }> };
 };
-
 type Projection = {
-server_time: string;
-next?: { index: number; planned_start_at?: string|null; matchesPreview: MatchItem[] } | null;
+  server_time: string;
+  next?: { index: number; planned_start_at?: string|null; matchesPreview: MatchItem[] } | null;
 };
 
-type InProgressCard = {
-roundIndex: number;
-courtNo: number;
-aNames: string[];
-bNames: string[];
-scoreA: number;
-scoreB: number;
+type CourtNames = { aNames: string[]; bNames: string[] };
+type CourtDisplay = {
+  courtNo: number;
+  current?: { roundIndex: number; roundId: string; names: CourtNames };
+  next?: { roundIndex: number; roundId: string; names: CourtNames };
 };
 
 export default function ClubAudienceBoardScreen() {
-const route = useRoute<any>();
-const sessionId: string | undefined = route.params?.sessionId;
+  const route = useRoute<any>();
+  const sessionId: string | undefined = route.params?.sessionId;
 
-const [loading, setLoading] = React.useState(true);
-const [proj, setProj] = React.useState<Projection | null>(null);
-const [offsetMs, setOffsetMs] = React.useState<number>(0);
-const [countdown, setCountdown] = React.useState<string>('');
+  const [loading, setLoading] = React.useState(true);
+  const [proj, setProj] = React.useState<Projection | null>(null);
+  const [offsetMs, setOffsetMs] = React.useState<number>(0);
+  const [countdown, setCountdown] = React.useState<string>('');
 
-const [inProgress, setInProgress] = React.useState<InProgressCard[]>([]);
+  const [courts, setCourts] = React.useState<number>(0);
+  const [perCourt, setPerCourt] = React.useState<CourtDisplay[]>([]);
 
-React.useEffect(() => { if (sessionId) fetchAll(); }, [sessionId]);
-React.useEffect(() => { const t = setInterval(() => tick(), 1000); return () => clearInterval(t); }, [proj, offsetMs]);
-React.useEffect(() => { const t = setInterval(() => fetchAll().catch(()=>{}), 5000); return () => clearInterval(t); }, [sessionId]);
-React.useEffect(() => {
-if (!sessionId) return;
-let channel: ReturnType<typeof supa.channel> | null = null;
-(async () => {
-try {
-channel = supa
-.channel('aud-board-' + sessionId)
-.on('postgres_changes', { event:'*', schema:'public', table:'round_results' }, () => fetchAll().catch(()=>{}))
-.subscribe();
-} catch {}
-})();
-return () => { if (channel) channel.unsubscribe(); };
-}, [sessionId]);
+  const fetchAll = React.useCallback(async () => {
+    if (!sessionId) return;
+    try {
+      let courtCount = 0;
+      try {
+        const { data: srow } = await supa.from('sessions').select('courts').eq('id', sessionId).maybeSingle();
+        courtCount = Number(srow?.courts || 0) || 0;
+      } catch {}
+      setCourts(courtCount);
 
-async function fetchAll() {
-if (!sessionId) return;
-try {
-const p = await listProjection(sessionId);
-setProj(p);
-try { const server = new Date(p?.server_time || new Date()); setOffsetMs(server.getTime()-Date.now()); } catch {}
-const cards = await fetchInProgressCards(sessionId);
-setInProgress(cards);
-} finally {
-setLoading(false);
-}
-}
+      try {
+        const data = await listProjection(sessionId);
+        setProj(data as any);
+        const server = new Date((data as any)?.server_time || new Date());
+        setOffsetMs(server.getTime() - Date.now());
+      } catch {
+        setProj(null);
+        setOffsetMs(0);
+      }
 
-function tick() {
-const n = proj?.next?.planned_start_at ? new Date(proj.next.planned_start_at) : null;
-if (!n) { setCountdown(''); return; }
-const diff = n.getTime() - (Date.now() + offsetMs);
-if (diff <= 0) { setCountdown('00:00'); return; }
-const s = Math.floor(diff/1000);
-const mm = String(Math.floor(s/60)).padStart(2,'0');
-const ss = String(s%60).padStart(2,'0');
-setCountdown(`${mm}:${ss}`);
-}
+      const pc = await buildPerCourtDisplays(sessionId, courtCount);
+      setPerCourt(pc);
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionId]);
 
-async function fetchInProgressCards(sid: string): Promise<InProgressCard[]> {
-const { data: rounds } = await supa
-.from('session_rounds')
-.select('id,index_no')
-.eq('session_id', sid)
-.order('index_no', { ascending: true });
+  React.useEffect(() => {
+    if (!sessionId) return;
+    fetchAll().catch(()=>{});
 
-const rlist = (rounds||[]).map((r:any)=>({ id:String(r.id), index:Number(r.index_no||0) }));
-if (!rlist.length) return [];
-const roundIds = rlist.map(r=>r.id);
+    let channel: any = null;
+    try {
+      channel = supa
+        .channel('aud-board-' + sessionId)
+        .on('postgres_changes', { event:'*', schema:'public', table:'round_results' }, () => fetchAll().catch(()=>{}))
+        .on('postgres_changes', { event:'*', schema:'public', table:'round_courts' }, () => fetchAll().catch(()=>{}))
+        .on('postgres_changes', { event:'*', schema:'public', table:'round_matches' }, () => fetchAll().catch(()=>{}))
+        .on('postgres_changes', { event:'*', schema:'public', table:'session_rounds' }, () => fetchAll().catch(()=>{}))
+        .subscribe();
+    } catch {}
 
-const { data: rr } = await supa
-  .from('round_results')
-  .select('round_id,court_no,serve_state_json,finished_at')
-  .in('round_id', roundIds as any)
-  .is('finished_at', null)
-  .not('serve_state_json', 'is', null);
+    const t = setInterval(() => fetchAll().catch(()=>{}), 5000);
+    return () => {
+      clearInterval(t);
+      try { channel?.unsubscribe(); } catch {}
+    };
+  }, [sessionId, fetchAll]);
 
-if (!rr || !rr.length) return [];
+  React.useEffect(() => {
+    const t = setInterval(() => tick(), 1000);
+    return () => clearInterval(t);
+  }, [proj, offsetMs]);
 
-const { data: rms } = await supa
-  .from('round_matches')
-  .select('round_id,court_no,team_a,team_b')
-  .in('round_id', roundIds as any);
+  function tick() {
+    const n = proj?.next?.planned_start_at ? new Date(proj.next.planned_start_at) : null;
+    if (!n) { setCountdown(''); return; }
+    const diff = n.getTime() - (Date.now() + offsetMs);
+    if (diff <= 0) { setCountdown('00:00'); return; }
+    const s = Math.floor(diff / 1000);
+    const mm = String(Math.floor(s/60)).padStart(2,'0');
+    const ss = String(s%60).padStart(2,'0');
+    setCountdown(`${mm}:${ss}`);
+  }
 
-const matchMap = new Map<string, { aNames:string[], bNames:string[] }>();
-(rms||[]).forEach((m:any) => {
-  const key = `${m.round_id}#${m.court_no}`;
-  const aNames = ((m.team_a?.players)||[]).map((p:any)=> String(p?.name || ''));
-  const bNames = ((m.team_b?.players)||[]).map((p:any)=> String(p?.name || ''));
-  matchMap.set(key, { aNames, bNames });
-});
-
-const ridToIndex = new Map<string, number>(rlist.map(r=>[r.id,r.index]));
-const parse = (st:any) => {
-  const games = st?.games || [];
-  const cur = games[st?.currentGameIndex ?? 0] || null;
-  const pts = Array.isArray(cur?.points) ? cur.points : [0,0];
-  return { a:Number(pts[0]||0), b:Number(pts[1]||0) };
-};
-
-const cards: InProgressCard[] = (rr||[]).map((row:any) => {
-  const key = `${row.round_id}#${row.court_no}`;
-  const ref = matchMap.get(key) || { aNames:[''], bNames:[''] };
-  const sc = parse(row.serve_state_json || {});
-  return {
-    roundIndex: ridToIndex.get(String(row.round_id)) || 0,
-    courtNo: Number(row.court_no||0),
-    aNames: ref.aNames,
-    bNames: ref.bNames,
-    scoreA: sc.a, scoreB: sc.b,
-  };
-});
-
-cards.sort((x,y)=> (x.roundIndex===y.roundIndex ? (x.courtNo - y.courtNo) : (x.roundIndex - y.roundIndex)));
-return cards;
-}
-
-if (!sessionId || loading) {
-return (
-<View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center' }}>
-<ActivityIndicator color="#90caf9" />
-</View>
-);
-}
-
-const next = proj?.next;
-const nextMatches = next?.matchesPreview || [];
-
-return (
-<View style={{ flex:1, backgroundColor:C.bg }}>
-<StatusBar barStyle="light-content" />
-<ScrollView contentContainerStyle={{ padding: 12 }}>
-<Text style={{ color:'#fff', fontSize: 20, fontWeight:'800', marginBottom: 8 }}>進行中（未結束）</Text>
-{inProgress.length === 0 ? (
-<Text style={{ color:'#888', marginBottom: 14 }}>目前沒有進行中的對戰</Text>
-) : (
-<View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
-{inProgress.map((m, idx) => (
-<View key={'prog-'+idx} style={{
-width: '49%', minWidth: 280, padding:12,
-backgroundColor:'#1f1f1f', borderRadius:12, borderWidth:1, borderColor:'#333', marginBottom:10
-}}>
-<Text style={{ color:'#fff', fontSize:18, fontWeight:'800', marginBottom:8 }}>
-第 {m.roundIndex} 輪 · 場地 {m.courtNo}
-</Text>
-<Text style={{ color:'#90caf9', fontSize:16, fontWeight:'700' }}>
-{m.aNames.join('、 ')}
-</Text>
-<Text style={{ color:'#ddd', marginVertical:6, fontSize:16, textAlign:'center' }}>
-VS （{m.scoreA}:{m.scoreB}）
-</Text>
-<Text style={{ color:'#ef9a9a', fontSize:16, fontWeight:'700' }}>
-{m.bNames.join('、 ')}
-</Text>
-</View>
-))}
-</View>
-)}
-
-    <Text style={{ color:'#fff', fontSize: 20, fontWeight:'800', marginTop:10, marginBottom:6 }}>
-      {next ? `下一輪：第 ${next.index} 輪` : '下一輪 ─'}
-    </Text>
-    {!!countdown && (
-      <Text style={{ color:'#ffecb3', fontSize:36, fontWeight:'800', marginBottom:8 }}>
-        開賽倒數 {countdown}
-      </Text>
-    )}
-    {nextMatches.length > 0 ? (
-      <View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
-        {nextMatches.map((m, idx) => (
-          <View key={'next-'+idx} style={{
-            width: '49%', minWidth: 280, padding:12,
-            backgroundColor:'#1f1f1f', borderRadius:12, borderWidth:1, borderColor:'#333', marginBottom:10
-          }}>
-            <Text style={{ color:'#fff', fontSize:18, fontWeight:'800', marginBottom:8 }}>場地 {m.court_no}</Text>
-            <Text style={{ color:'#90caf9', fontSize:16, fontWeight:'700' }}>
-              {(m.team_a?.players||[]).map(p=>p.name).join('、 ')}
-            </Text>
-            <Text style={{ color:'#ddd', textAlign:'center', marginVertical:6, fontSize:16 }}>
-              VS
-            </Text>
-            <Text style={{ color:'#ef9a9a', fontSize:16, fontWeight:'700' }}>
-              {(m.team_b?.players||[]).map(p=>p.name).join('、 ')}
-            </Text>
-          </View>
-        ))}
+  if (!sessionId || loading) {
+    return (
+      <View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center' }}>
+        <ActivityIndicator color="#90caf9" />
       </View>
-    ) : (
-      <Text style={{ color:'#888' }}>尚無預覽對戰</Text>
-    )}
-  </ScrollView>
-</View>
-);
+    );
+  }
+
+  const next = proj?.next;
+  const nextMatches = next?.matchesPreview || [];
+
+  return (
+    <View style={{ flex:1, backgroundColor:C.bg }}>
+      <StatusBar barStyle="light-content" />
+      <ScrollView contentContainerStyle={{ padding: 12 }}>
+        <Text style={{ color:'#fff', fontSize: 20, fontWeight:'800', marginBottom: 6 }}>
+          {next ? `下一輪（全域）：第 ${next.index} 輪` : '下一輪（全域） ─'}
+        </Text>
+        {!!countdown && (
+          <Text style={{ color:'#ffecb3', fontSize:36, fontWeight:'800', marginBottom:8 }}>
+            開賽倒數 {countdown}
+          </Text>
+        )}
+
+        <Text style={{ color:'#fff', fontSize: 20, fontWeight:'800', marginTop:10, marginBottom:8 }}>目前各場地名單</Text>
+        {courts <= 0 ? (
+          <Text style={{ color:'#888' }}>本場次未設定球場數</Text>
+        ) : perCourt.length === 0 ? (
+          <Text style={{ color:'#888' }}>尚無輪次</Text>
+        ) : (
+          <View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
+            {perCourt.map((c) => (
+              <View key={'court-'+c.courtNo} style={{
+                width: '49%', minWidth: 280, padding:12,
+                backgroundColor:'#1f1f1f', borderRadius:12, borderWidth:1, borderColor:'#333', marginBottom:10
+              }}>
+                <Text style={{ color:'#fff', fontSize:18, fontWeight:'800', marginBottom:8 }}>
+                  場地 {c.courtNo}
+                </Text>
+
+                {c.current ? (
+                  <>
+                    <Text style={{ color:'#bbb', marginBottom: 4 }}>目前：第 {c.current.roundIndex} 輪</Text>
+                    <Text style={{ color:'#90caf9', fontSize:16, fontWeight:'700' }}>
+                      {c.current.names.aNames.join('、 ')}
+                    </Text>
+                    <Text style={{ color:'#ddd', textAlign:'center', marginVertical:6, fontSize:16 }}>
+                      VS
+                    </Text>
+                    <Text style={{ color:'#ef9a9a', fontSize:16, fontWeight:'700' }}>
+                      {c.current.names.bNames.join('、 ')}
+                    </Text>
+                  </>
+                ) : (
+                  <Text style={{ color:'#888' }}>目前：無（此場地所有輪已結束）</Text>
+                )}
+
+                {c.next ? (
+                  <View style={{ marginTop:8 }}>
+                    <Text style={{ color:'#bbb', marginBottom:4 }}>預告：第 {c.next.roundIndex} 輪</Text>
+                    <Text style={{ color:'#90caf9' }}>
+                      {c.next.names.aNames.join('、 ')}
+                    </Text>
+                    <Text style={{ color:'#ddd', textAlign:'center', marginVertical:4 }}>VS</Text>
+                    <Text style={{ color:'#ef9a9a' }}>
+                      {c.next.names.bNames.join('、 ')}
+                    </Text>
+                  </View>
+                ) : (
+                  <Text style={{ color:'#555', marginTop: 8 }}>預告：—</Text>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
+
+        <Text style={{ color:'#fff', fontSize: 20, fontWeight:'800', marginTop:10, marginBottom:6 }}>
+          全域下一輪預覽
+        </Text>
+        {nextMatches.length > 0 ? (
+          <View style={{ flexDirection:'row', flexWrap:'wrap', justifyContent:'space-between' }}>
+            {nextMatches.map((m, idx) => (
+              <View key={'next-'+idx} style={{
+                width: '49%', minWidth: 280, padding:12,
+                backgroundColor:'#1f1f1f', borderRadius:12, borderWidth:1, borderColor:'#333', marginBottom:10
+              }}>
+                <Text style={{ color:'#fff', fontSize:18, fontWeight:'800', marginBottom:8 }}>場地 {m.court_no}</Text>
+                <Text style={{ color:'#90caf9', fontSize:16, fontWeight:'700' }}>
+                  {(m.team_a?.players||[]).map(p=>p.name).join('、 ')}
+                </Text>
+                <Text style={{ color:'#ddd', textAlign:'center', marginVertical:6, fontSize:16 }}>
+                  VS
+                </Text>
+                <Text style={{ color:'#ef9a9a', fontSize:16, fontWeight:'700' }}>
+                  {(m.team_b?.players||[]).map(p=>p.name).join('、 ')}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={{ color:'#888' }}>尚無預覽對戰</Text>
+        )}
+      </ScrollView>
+    </View>
+  );
+}
+
+async function buildPerCourtDisplays(sessionId: string, courts: number): Promise<CourtDisplay[]> {
+  const out: CourtDisplay[] = [];
+  if (!sessionId || courts <= 0) return out;
+
+  const { data: rounds } = await supa
+    .from('session_rounds')
+    .select('id,index_no')
+    .eq('session_id', sessionId)
+    .order('index_no', { ascending: true });
+
+  const rlist = (rounds || []).map((r:any) => ({ id: String(r.id), index: Number(r.index_no || 0) }));
+  if (!rlist.length) return out;
+
+  const roundIds = rlist.map(r => r.id);
+
+  const { data: rr } = await supa
+    .from('round_results')
+    .select('round_id,court_no,finished_at')
+    .in('round_id', roundIds as any);
+
+  const finished = new Set<string>();
+  (rr || []).forEach((row:any) => {
+    const fin = !!row.finished_at;
+    if (fin) finished.add(`${row.round_id}#${Number(row.court_no)}`);
+  });
+
+  const { data: rms } = await supa
+    .from('round_matches')
+    .select('round_id,court_no,team_a,team_b')
+    .in('round_id', roundIds as any);
+
+  const matchMap = new Map<string, CourtNames>();
+  (rms || []).forEach((m:any) => {
+    const key = `${m.round_id}#${Number(m.court_no)}`;
+    const aNames = ((m.team_a?.players)||[]).map((p:any)=> String(p?.name || ''));
+    const bNames = ((m.team_b?.players)||[]).map((p:any)=> String(p?.name || ''));
+    matchMap.set(key, { aNames, bNames });
+  });
+
+  const { data: rcs } = await supa
+    .from('round_courts')
+    .select('round_id,court_no,team_a_ids,team_b_ids')
+    .in('round_id', roundIds as any);
+
+  const courtsMap = new Map<string, { aIds: string[]; bIds: string[] }>();
+  const allIds = new Set<string>();
+  (rcs || []).forEach((row:any) => {
+    const key = `${row.round_id}#${Number(row.court_no)}`;
+    const aIds = Array.isArray(row.team_a_ids) ? row.team_a_ids.map(String) : [];
+    const bIds = Array.isArray(row.team_b_ids) ? row.team_b_ids.map(String) : [];
+    courtsMap.set(key, { aIds, bIds });
+    aIds.concat(bIds).forEach((id:string)=> allIds.add(id));
+  });
+
+  let buddyName: Record<string,string> = {};
+  if (allIds.size > 0) {
+    const ids = Array.from(allIds);
+    const { data: buds } = await supa
+      .from('buddies')
+      .select('id,name')
+      .in('id', ids as any);
+    buddyName = Object.fromEntries((buds||[]).map((b:any)=> [String(b.id), String(b.name || '')]));
+  }
+
+  const namesOf = (roundId: string, courtNo: number): CourtNames => {
+    const k = `${roundId}#${courtNo}`;
+    const direct = matchMap.get(k);
+    if (direct) return direct;
+    const co = courtsMap.get(k);
+    if (!co) return { aNames: [], bNames: [] };
+    const mapNames = (ids: string[]) => ids.map(id => buddyName[id] || (id ? id.slice(0,6)+'…' : ''));
+    return { aNames: mapNames(co.aIds), bNames: mapNames(co.bIds) };
+  };
+
+  for (let c = 1; c <= courts; c++) {
+    let curIdx = -1;
+    for (let i = 0; i < rlist.length; i++) {
+      const r = rlist[i];
+      const done = finished.has(`${r.id}#${c}`);
+      if (!done) { curIdx = i; break; }
+    }
+
+    let cur: CourtDisplay['current'] | undefined = undefined;
+    let nxt: CourtDisplay['next'] | undefined = undefined;
+
+    if (curIdx >= 0) {
+      const r = rlist[curIdx];
+      cur = { roundIndex: r.index, roundId: r.id, names: namesOf(r.id, c) };
+      if (curIdx + 1 < rlist.length) {
+        const n = rlist[curIdx + 1];
+        nxt = { roundIndex: n.index, roundId: n.id, names: namesOf(n.id, c) };
+      }
+    } else {
+      cur = undefined;
+      nxt = undefined;
+    }
+
+    out.push({ courtNo: c, current: cur, next: nxt });
+  }
+
+  return out;
 }ezbmt-tracked/src/screens/SettingsScreen.tsx
  
 import React from 'react';
@@ -12306,24 +12476,71 @@ function exportCsv(matchId: string, rows: Row[]) {
 import React from 'react';
 import { View, Text, FlatList, TextInput, Pressable, Alert } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
-import { listSessions, createSession } from '../db';
+import {
+listSessions,
+createSession,
+signupSession,
+cancelSignup,
+listSessionSubscriptions,
+subscribeSessionNotification,
+unsubscribeSessionNotification,
+} from '../db';
+import { supa } from '../lib/supabase';
 
 const C = { bg:'#111', card:'#1e1e1e', text:'#fff', sub:'#bbb', border:'#333', primary:'#1976d2', btn:'#1976d2' };
+
+type SessionItem = { id:string; date:string; courts:number; round_minutes:number };
 
 export default function SessionsScreen() {
 const route = useRoute<any>();
 const nav = useNavigation<any>();
 const clubId = route.params?.clubId as string;
 
-const [items, setItems] = React.useState<Array<{ id:string; date:string; courts:number; round_minutes:number }>>([]);
+const [items, setItems] = React.useState<SessionItem[]>([]);
 const [date, setDate] = React.useState('2025-01-01');
 const [courts, setCourts] = React.useState('3');
 const [roundMin, setRoundMin] = React.useState('15');
 
+// 報名與通知追蹤狀態
+const [mySignups, setMySignups] = React.useState<Record<string, boolean>>({});
+const [mySubs, setMySubs] = React.useState<Record<string, boolean>>({});
+const [busy, setBusy] = React.useState<string | null>(null);
+const [busySub, setBusySub] = React.useState<string | null>(null);
+
 const load = React.useCallback(async ()=>{
-try { setItems(await listSessions(clubId)); }
-catch(e:any){ Alert.alert('載入失敗', String(e?.message||e)); }
+try {
+const rows = await listSessions(clubId) as SessionItem[];
+setItems(rows);
+
+  // 讀取使用者是否已報名
+  try {
+    const { data: me } = await supa.auth.getUser();
+    const uid = me?.user?.id;
+    if (!uid || rows.length === 0) { setMySignups({}); setMySubs({}); return; }
+
+    // 報名狀態
+    const ids = rows.map((r: SessionItem) => r.id);
+    const { data } = await supa
+      .from('sessions_signups')
+      .select('session_id')
+      .eq('user_id', uid)
+      .in('session_id', ids as any);
+    const sMap: Record<string, boolean> = {};
+    (data || []).forEach((r: any) => { sMap[String(r.session_id)] = true; });
+    setMySignups(sMap);
+
+    // 通知追蹤狀態
+    try {
+      const subsMap = await listSessionSubscriptions(ids);
+      setMySubs(subsMap);
+    } catch { setMySubs({}); }
+  } catch {
+    setMySignups({});
+    setMySubs({});
+  }
+} catch(e:any){ Alert.alert('載入失敗', String(e?.message||e)); }
 }, [clubId]);
+
 React.useEffect(()=>{ load(); }, [load]);
 
 const add = async ()=>{
@@ -12338,55 +12555,143 @@ setDate('2025-01-01'); setCourts('3'); setRoundMin('15'); load();
 } catch(e:any){ Alert.alert('新增失敗', String(e?.message||e)); }
 };
 
-const renderItem = ({ item }: any) => (
-<View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:10, marginBottom:10 }}>
-<Text style={{ color:C.text, fontWeight:'600' }}>{item.date}　{item.courts} 場 / 每輪 {item.round_minutes} 分鐘</Text>
-<View style={{ flexDirection:'row', marginTop:8, flexWrap:'wrap' }}>
-<Pressable
-onPress={()=>nav.navigate('SessionCheckIn', { sessionId: item.id, clubId })}
-style={{ backgroundColor:C.btn, paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
->
-<Text style={{ color:'#fff' }}>報到名單</Text>
-</Pressable>
+const doSignup = async (sessionId:string) => {
+setBusy(sessionId);
+try {
+await signupSession(sessionId);
+setMySignups(prev => ({ ...prev, [sessionId]: true }));
+Alert.alert('成功','已送出報名');
+} catch (e:any) {
+Alert.alert('報名失敗', String(e?.message || e));
+} finally { setBusy(null); }
+};
 
-    <Pressable
-      onPress={()=>nav.navigate('ClubPairing', { sessionId: item.id })}
-      style={{ backgroundColor:'#00695c', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
-    >
-      <Text style={{ color:'#fff' }}>排點（進階）</Text>
-    </Pressable>
+const doCancel = async (sessionId:string) => {
+setBusy(sessionId);
+try {
+await cancelSignup(sessionId);
+setMySignups(prev => {
+const copy = { ...prev }; delete copy[sessionId]; return copy;
+});
+Alert.alert('成功','已取消報名');
+} catch (e:any) {
+Alert.alert('取消失敗', String(e?.message || e));
+} finally { setBusy(null); }
+};
 
-    <Pressable
-      onPress={()=>nav.navigate('ClubBoard', { sessionId: item.id })}
-      style={{ backgroundColor:'#5d4037', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
-    >
-      <Text style={{ color:'#fff' }}>看板</Text>
-    </Pressable>
+const subOn = async (sessionId: string) => {
+setBusySub(sessionId);
+try {
+await subscribeSessionNotification(sessionId);
+setMySubs(prev => ({ ...prev, [sessionId]: true }));
+} catch (e:any) {
+Alert.alert('追蹤失敗', String(e?.message || e));
+} finally { setBusySub(null); }
+};
 
-    <Pressable
-      onPress={()=>nav.navigate('ClubBoardAudience', { sessionId: item.id })}
-      style={{ backgroundColor:'#455a64', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
-    >
-      <Text style={{ color:'#fff' }}>看板（唯讀）</Text>
-    </Pressable>
+const subOff = async (sessionId: string) => {
+setBusySub(sessionId);
+try {
+await unsubscribeSessionNotification(sessionId);
+setMySubs(prev => {
+const copy = { ...prev }; delete copy[sessionId]; return copy;
+});
+} catch (e:any) {
+Alert.alert('取消追蹤失敗', String(e?.message || e));
+} finally { setBusySub(null); }
+};
 
-    {/* 新增：RSVP 管理入口 */}
-    <Pressable
-      onPress={()=>nav.navigate('SessionSignups', { sessionId: item.id, clubId })}
-      style={{ backgroundColor:'#7b1fa2', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
-    >
-      <Text style={{ color:'#fff' }}>報名/候補</Text>
-    </Pressable>
+const renderItem = ({ item }: { item: SessionItem }) => {
+const signed = !!mySignups[item.id];
+const subbed = !!mySubs[item.id];
+
+return (
+  <View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:10, marginBottom:10 }}>
+    <Text style={{ color:C.text, fontWeight:'600' }}>{item.date}　{item.courts} 場 / 每輪 {item.round_minutes} 分鐘</Text>
+    <View style={{ flexDirection:'row', marginTop:8, flexWrap:'wrap' }}>
+      <Pressable
+        onPress={()=>nav.navigate('SessionCheckIn', { sessionId: item.id, clubId })}
+        style={{ backgroundColor:C.btn, paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+      >
+        <Text style={{ color:'#fff' }}>報到名單</Text>
+      </Pressable>
+
+      <Pressable
+        onPress={()=>nav.navigate('ClubPairing', { sessionId: item.id })}
+        style={{ backgroundColor:'#00695c', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+      >
+        <Text style={{ color:'#fff' }}>排點（進階）</Text>
+      </Pressable>
+
+      <Pressable
+        onPress={()=>nav.navigate('ClubBoard', { sessionId: item.id })}
+        style={{ backgroundColor:'#5d4037', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+      >
+        <Text style={{ color:'#fff' }}>看板</Text>
+      </Pressable>
+
+      <Pressable
+        onPress={()=>nav.navigate('ClubBoardAudience', { sessionId: item.id })}
+        style={{ backgroundColor:'#455a64', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+      >
+        <Text style={{ color:'#fff' }}>看板（唯讀）</Text>
+      </Pressable>
+
+      <Pressable
+        onPress={()=>nav.navigate('SessionSignups', { sessionId: item.id, clubId })}
+        style={{ backgroundColor:'#7b1fa2', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+      >
+        <Text style={{ color:'#fff' }}>報名/候補</Text>
+      </Pressable>
+
+      {/* 使用者側：報名 / 取消報名 */}
+      {!signed ? (
+        <Pressable
+          onPress={()=>doSignup(item.id)}
+          disabled={busy===item.id}
+          style={{ backgroundColor: busy===item.id ? '#555' : '#1976d2', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+        >
+          <Text style={{ color:'#fff' }}>{busy===item.id?'處理中…':'我要報名'}</Text>
+        </Pressable>
+      ) : (
+        <Pressable
+          onPress={()=>doCancel(item.id)}
+          disabled={busy===item.id}
+          style={{ backgroundColor: busy===item.id ? '#555' : '#9e9e9e', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+        >
+          <Text style={{ color:'#fff' }}>{busy===item.id?'處理中…':'取消報名'}</Text>
+        </Pressable>
+      )}
+
+      {/* 追蹤通知 / 取消追蹤 */}
+      {!subbed ? (
+        <Pressable
+          onPress={()=>subOn(item.id)}
+          disabled={busySub===item.id}
+          style={{ backgroundColor: busySub===item.id ? '#555' : '#0288d1', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+        >
+          <Text style={{ color:'#fff' }}>{busySub===item.id?'處理中…':'追蹤通知'}</Text>
+        </Pressable>
+      ) : (
+        <Pressable
+          onPress={()=>subOff(item.id)}
+          disabled={busySub===item.id}
+          style={{ backgroundColor: busySub===item.id ? '#555' : '#78909c', paddingVertical:8, paddingHorizontal:12, borderRadius:8, marginRight:8, marginBottom:8 }}
+        >
+          <Text style={{ color:'#fff' }}>{busySub===item.id?'處理中…':'取消追蹤'}</Text>
+        </Pressable>
+      )}
+    </View>
   </View>
-</View>
 );
+};
 
 return (
 <View style={{ flex:1, backgroundColor:C.bg, padding:12 }}>
 <Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>場次</Text>
 <FlatList
 data={items}
-keyExtractor={i=>i.id}
+keyExtractor={(i)=>i.id}
 renderItem={renderItem}
 ListHeaderComponent={(
 <View style={{ borderWidth:1, borderColor:C.border, borderRadius:10, padding:10, marginBottom:10 }}>
@@ -12407,9 +12712,7 @@ style={{ borderWidth:1, borderColor:'#444', borderRadius:8, paddingHorizontal:10
 />
 </View>
 );
-}
-
-ezbmt-tracked/src/screens/QuickScoreboardScreen.tsx
+}ezbmt-tracked/src/screens/QuickScoreboardScreen.tsx
  
 import React from 'react';
 import {
@@ -13492,250 +13795,266 @@ import { supa } from '../lib/supabase';
 const C = { bg:'#111', card:'#1e1e1e', text:'#fff', btnA:'#1976d2', btnB:'#d32f2f', border:'#333', sub:'#bbb', gray:'#616161' };
 
 export default function ClubScoreboardScreen() {
-const route = useRoute<any>();
-const roundId = route.params?.roundId as string;
-const courtNo = route.params?.courtNo as number;
-const courtsTotal = Number(route.params?.courts || 0) || 0;
+  const route = useRoute<any>();
+  const roundId = route.params?.roundId as string;
+  const courtNo = route.params?.courtNo as number;
+  const courtsTotal = Number(route.params?.courts || 0) || 0;
 
-const [teams, setTeams] = React.useState<{ A: [string, string], B: [string, string] }>({ A: ['A0','A1'], B: ['B0','B1'] });
-const [state, setState] = React.useState<MatchState | null>(null);
-const [snap, setSnap] = React.useState<any>(null);
+  const [teams, setTeams] = React.useState<{ A: [string, string], B: [string, string] }>({ A: ['A0','A1'], B: ['B0','B1'] });
+  const [state, setState] = React.useState<MatchState | null>(null);
+  const [snap, setSnap] = React.useState<any>(null);
 
-const [pointsToWin, setPointsToWin] = React.useState<number>(21);
-const [bestOf, setBestOf] = React.useState<number>(1);
-const [deuce, setDeuce] = React.useState<boolean>(true);
+  const [pointsToWin, setPointsToWin] = React.useState<number>(21);
+  const [bestOf, setBestOf] = React.useState<number>(1);
+  const [deuce, setDeuce] = React.useState<boolean>(true);
 
-const [myRole, setMyRole] = React.useState<string | null>(null);
-const canScore = ['owner','admin','scorer'].includes(String(myRole || ''));
+  const [myRole, setMyRole] = React.useState<string | null>(null);
+  const canScore = ['owner','admin','scorer'].includes(String(myRole || ''));
 
-React.useEffect(() => {
-(async () => {
-try {
-const t = await getRoundCourtTeams({ roundId, courtNo });
-setTeams(t);
+  // 追加：保留 sessionId 用於通知
+  const [sessionIdOfRound, setSessionIdOfRound] = React.useState<string | null>(null);
 
-    // 角色：round -> session -> club -> role
-    try {
-      const { data: rr } = await supa.from('session_rounds').select('session_id').eq('id', roundId).maybeSingle();
-      const sid = rr?.session_id;
-      if (sid) {
-        const { data: ss } = await supa.from('sessions').select('club_id').eq('id', sid).maybeSingle();
-        const clubId = ss?.club_id;
-        if (clubId) setMyRole(await getMyClubRole(String(clubId)) as any);
+  React.useEffect(() => {
+    (async () => {
+      try {
+        const t = await getRoundCourtTeams({ roundId, courtNo });
+        setTeams(t);
+
+        // 角色：round -> session -> club -> role
+        try {
+          const { data: rr } = await supa.from('session_rounds').select('session_id').eq('id', roundId).maybeSingle();
+          const sid = rr?.session_id;
+          if (sid) {
+            setSessionIdOfRound(String(sid));
+            const { data: ss } = await supa.from('sessions').select('club_id').eq('id', sid).maybeSingle();
+            const clubId = ss?.club_id;
+            if (clubId) setMyRole(await getMyClubRole(String(clubId)) as any);
+          }
+        } catch { setMyRole(null); }
+
+        const saved = await getRoundResultState({ roundId, courtNo });
+        let s: MatchState | null = null;
+        if (saved?.state_json) {
+          try { s = deserialize(saved.state_json); } catch { s = null; }
+        }
+        if (!s) {
+          s = createMatch({
+            teams: [
+              { players: [{ id:'A0', name: t.A[0] }, { id:'A1', name: t.A[1] }], startRightIndex: 0 },
+              { players: [{ id:'B0', name: t.B[0] }, { id:'B1', name: t.B[1] }], startRightIndex: 0 },
+            ],
+            rules: { bestOf: 1, pointsToWin: 21, winBy: 2, cap: 30 },
+            startingServerTeam: 0,
+            startingServerPlayerIndex: 0,
+            metadata: { category:'MD' },
+          });
+        }
+
+        const r = s.rules || { bestOf: 1, pointsToWin: 21, winBy: 2 };
+        setPointsToWin(Number(r.pointsToWin || 21));
+        setBestOf(Number(r.bestOf || 1));
+        setDeuce((r.winBy ?? 2) > 1);
+
+        setState(s);
+        setSnap(getUiSnapshot(s));
+      } catch (e:any) {
+        Alert.alert('載入失敗', String(e?.message||e));
       }
-    } catch { setMyRole(null); }
+    })();
+  }, [roundId, courtNo]);
 
-    const saved = await getRoundResultState({ roundId, courtNo });
-    let s: MatchState | null = null;
-    if (saved?.state_json) {
-      try { s = deserialize(saved.state_json); } catch { s = null; }
-    }
-    if (!s) {
-      s = createMatch({
-        teams: [
-          { players: [{ id:'A0', name: t.A[0] }, { id:'A1', name: t.A[1] }], startRightIndex: 0 },
-          { players: [{ id:'B0', name: t.B[0] }, { id:'B1', name: t.B[1] }], startRightIndex: 0 },
-        ],
-        rules: { bestOf: 1, pointsToWin: 21, winBy: 2, cap: 30 },
-        startingServerTeam: 0,
-        startingServerPlayerIndex: 0,
-        metadata: { category:'MD' },
-      });
-    }
-
-    const r = s.rules || { bestOf: 1, pointsToWin: 21, winBy: 2 };
-    setPointsToWin(Number(r.pointsToWin || 21));
-    setBestOf(Number(r.bestOf || 1));
-    setDeuce((r.winBy ?? 2) > 1);
-
+  const saveState = React.useCallback(async (s: MatchState) => {
     setState(s);
-    setSnap(getUiSnapshot(s));
-  } catch (e:any) {
-    Alert.alert('載入失敗', String(e?.message||e));
-  }
-})();
-}, [roundId, courtNo]);
+    const ui = getUiSnapshot(s);
+    setSnap(ui);
+    // 持續回寫 serve_state_json（勝負在 finish 時再寫）
+    await upsertRoundResultOutcome({
+      roundId, courtNo,
+      serveStateJson: serialize(s),
+    });
+  }, [roundId, courtNo]);
 
-const saveState = React.useCallback(async (s: MatchState) => {
-setState(s);
-const ui = getUiSnapshot(s);
-setSnap(ui);
-// 不中斷舊流程：仍把 serve_state_json 存回（winner/score 在 finish 時再寫）
-await upsertRoundResultOutcome({
-roundId, courtNo,
-serveStateJson: serialize(s),
-});
-}, [roundId, courtNo]);
-
-const score = async (winner: 0|1) => {
-if (!canScore) { Alert.alert('沒有權限','僅 owner/admin/scorer 可記分'); return; }
-try {
-if (!state) return;
-const next = nextRally({ ...state }, winner);
-await saveState(next);
-} catch (e:any) {
-Alert.alert('記分失敗', String(e?.message||e));
-}
-};
-
-const applyRules = async (patch: Partial<MatchState['rules']>) => {
-if (!canScore) { Alert.alert('沒有權限','僅 owner/admin/scorer 可調整規則'); return; }
-try {
-if (!state) return;
-const r = { ...state.rules, ...patch };
-if (patch.pointsToWin != null) setPointsToWin(Number(patch.pointsToWin));
-if (patch.bestOf != null) setBestOf(Number(patch.bestOf));
-if (patch.winBy != null) setDeuce(Number(patch.winBy) > 1);
-await saveState({ ...state, rules: r });
-} catch (e:any) {
-Alert.alert('套用失敗', String(e?.message||e));
-}
-};
-
-const finishMatch = async () => {
-if (!canScore) { Alert.alert('沒有權限','僅 owner/admin/scorer 可結束比賽'); return; }
-try {
-if (!state) { Alert.alert('提示','尚未載入比賽'); return; }
-
-  // 最終比分與勝方
-  const ui = getUiSnapshot(state);
-  const scoreHome = Number(ui?.scoreA || 0);
-  const scoreAway = Number(ui?.scoreB || 0);
-
-  // 一般情況以 games 贏局數決定；若未滿足 bestOf 就以現在比分較高者
-  const wonA = (state.games||[]).filter(g=>g?.winner===0).length;
-  const wonB = (state.games||[]).filter(g=>g?.winner===1).length;
-  const need = Math.floor((state.rules?.bestOf||1)/2)+1;
-  const winnerTeam = (wonA>=need || wonB>=need) ? (wonA>wonB ? 0 : 1) : (scoreHome===scoreAway ? null : (scoreHome>scoreAway ? 0 : 1));
-
-  // upsert 結果（包含 serve_state_json）
-  await upsertRoundResultOutcome({
-    roundId, courtNo,
-    serveStateJson: serialize(state),
-    scoreHome, scoreAway,
-    winnerTeam,
-    finishedAt: new Date().toISOString(),
-  });
-
-  // 試著把此輪設為 finished：優先看 finished_at，其次 serve_state_json
-  if (courtsTotal > 0) {
+  const score = async (winner: 0|1) => {
+    if (!canScore) { Alert.alert('沒有權限','僅 owner/admin/scorer 可記分'); return; }
     try {
-      // 先看 finished_at
-      const { count: c1 } = await supa
-        .from('round_results')
-        .select('court_no', { count: 'exact', head: true })
-        .eq('round_id', roundId)
-        .not('finished_at', 'is', null);
-      let done = Number(c1 || 0);
-      if (done < courtsTotal) {
-        // 回退 serve_state_json
-        const { count: c2 } = await supa
-          .from('round_results')
-          .select('court_no', { count: 'exact', head: true })
-          .eq('round_id', roundId)
-          .not('serve_state_json', 'is', null);
-        done = Math.max(done, Number(c2 || 0));
+      if (!state) return;
+      const next = nextRally({ ...state }, winner);
+      await saveState(next);
+    } catch (e:any) {
+      Alert.alert('記分失敗', String(e?.message||e));
+    }
+  };
+
+  const applyRules = async (patch: Partial<MatchState['rules']>) => {
+    if (!canScore) { Alert.alert('沒有權限','僅 owner/admin/scorer 可調整規則'); return; }
+    try {
+      if (!state) return;
+      const r = { ...state.rules, ...patch };
+      if (patch.pointsToWin != null) setPointsToWin(Number(patch.pointsToWin));
+      if (patch.bestOf != null) setBestOf(Number(patch.bestOf));
+      if (patch.winBy != null) setDeuce(Number(patch.winBy) > 1);
+      await saveState({ ...state, rules: r });
+    } catch (e:any) {
+      Alert.alert('套用失敗', String(e?.message||e));
+    }
+  };
+
+  const finishMatch = async () => {
+    if (!canScore) { Alert.alert('沒有權限','僅 owner/admin/scorer 可結束比賽'); return; }
+    try {
+      if (!state) { Alert.alert('提示','尚未載入比賽'); return; }
+
+      // 最終比分與勝方
+      const ui = getUiSnapshot(state);
+      const scoreHome = Number(ui?.scoreA || 0);
+      const scoreAway = Number(ui?.scoreB || 0);
+
+      // 一般情況以 games 贏局數決定；若未滿足 bestOf 就以現在比分較高者
+      const wonA = (state.games||[]).filter(g=>g?.winner===0).length;
+      const wonB = (state.games||[]).filter(g=>g?.winner===1).length;
+      const need = Math.floor((state.rules?.bestOf||1)/2)+1;
+      const winnerTeam = (wonA>=need || wonB>=need) ? (wonA>wonB ? 0 : 1) : (scoreHome===scoreAway ? null : (scoreHome>scoreAway ? 0 : 1));
+
+      // upsert 結果（包含 serve_state_json）
+      await upsertRoundResultOutcome({
+        roundId, courtNo,
+        serveStateJson: serialize(state),
+        scoreHome, scoreAway,
+        winnerTeam,
+        finishedAt: new Date().toISOString(),
+      });
+
+      // 試著把此輪設為 finished：優先看 finished_at，其次 serve_state_json
+      if (courtsTotal > 0) {
+        try {
+          const { count: c1 } = await supa
+            .from('round_results')
+            .select('court_no', { count: 'exact', head: true })
+            .eq('round_id', roundId)
+            .not('finished_at', 'is', null);
+          let done = Number(c1 || 0);
+          if (done < courtsTotal) {
+            const { count: c2 } = await supa
+              .from('round_results')
+              .select('court_no', { count: 'exact', head: true })
+              .eq('round_id', roundId)
+              .not('serve_state_json', 'is', null);
+            done = Math.max(done, Number(c2 || 0));
+          }
+          if (done >= courtsTotal) {
+            await supa.from('session_rounds').update({ status: 'finished' }).eq('id', roundId);
+          }
+        } catch {}
       }
-      if (done >= courtsTotal) {
-        await supa.from('session_rounds').update({ status: 'finished' }).eq('id', roundId);
-      }
-    } catch {}
-  }
-  Alert.alert('已結束', '本場比賽結果已記錄');
-} catch (e:any) {
-  Alert.alert('結束失敗', String(e?.message || e));
-}
-};
 
-if (!state || !snap) {
-return (
-<View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center' }}>
-<Text style={{ color:C.sub }}>載入中…</Text>
-</View>
-);
-}
+      // 新增：通知（追蹤該 session 的使用者）
+      try {
+        if (sessionIdOfRound) {
+          await supa.functions.invoke('send_notify', {
+            body: {
+              kind: 'event',
+              targetId: sessionIdOfRound,
+              title: `場地 ${courtNo} 已結束`,
+              body: `比分 ${scoreHome}:${scoreAway}（${winnerTeam===0 ? '主勝' : winnerTeam===1 ? '客勝' : '未定'}）`,
+              data: { sessionId: sessionIdOfRound, roundId, courtNo: String(courtNo) },
+            },
+          });
+        }
+      } catch {}
 
-const scoreA = snap?.scoreA ?? 0;
-const scoreB = snap?.scoreB ?? 0;
+      Alert.alert('已結束', '本場比賽結果已記錄');
+    } catch (e:any) {
+      Alert.alert('結束失敗', String(e?.message || e));
+    }
+  };
 
-return (
-<View style={{ flex:1, backgroundColor:C.bg, padding:12 }}>
-<Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>{`第 ${courtNo} 場地 計分板`}</Text>
-
-  <View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:12, marginBottom:10, opacity: canScore?1:0.8 }}>
-    <Text style={{ color:C.sub, marginBottom:6 }}>{`規則（目前：到 ${pointsToWin} 分 · ${bestOf}局制 · ${deuce ? 'Deuce開' : 'Deuce關'}）`}</Text>
-    <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:6 }}>
-      <Chip text="P11" active={pointsToWin===11} onPress={() => applyRules({ pointsToWin: 11 })} />
-      <Chip text="P15" active={pointsToWin===15} onPress={() => applyRules({ pointsToWin: 15 })} />
-      <Chip text="P21" active={pointsToWin===21} onPress={() => applyRules({ pointsToWin: 21 })} />
-      <Chip text="P25" active={pointsToWin===25} onPress={() => applyRules({ pointsToWin: 25 })} />
-      <Chip text="P31" active={pointsToWin===31} onPress={() => applyRules({ pointsToWin: 31 })} />
-    </View>
-    <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:6 }}>
-      <Chip text="BO1" active={bestOf===1} onPress={() => applyRules({ bestOf: 1 })} />
-      <Chip text="BO3" active={bestOf===3} onPress={() => applyRules({ bestOf: 3 })} />
-    </View>
-    <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
-      <Chip text={deuce ? 'Deuce 開' : 'Deuce 關'} active={deuce} onPress={() => applyRules({ winBy: deuce ? 1 : 2 })} />
-    </View>
-  </View>
-
-  <View style={{ padding:12, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:12 }}>
-    <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
-      <View style={{ flex:1, alignItems:'center' }}>
-        <Text style={{ color:'#90caf9', fontSize:18, fontWeight:'700' }}>{`${teams.A[0]} / ${teams.A[1]}`}</Text>
+  if (!state || !snap) {
+    return (
+      <View style={{ flex:1, backgroundColor:C.bg, alignItems:'center', justifyContent:'center' }}>
+        <Text style={{ color:C.sub }}>載入中…</Text>
       </View>
-    <View style={{ width: 100, alignItems:'center' }}>
-      <Text style={{ color:'#fff', fontSize:28, fontWeight:'800' }}>{scoreA}</Text>
-      <Text style={{ color:C.sub }}>VS</Text>
-      <Text style={{ color:'#fff', fontSize:28, fontWeight:'800' }}>{scoreB}</Text>
-    </View>
-    <View style={{ flex:1, alignItems:'center' }}>
-      <Text style={{ color:'#ef9a9a', fontSize:18, fontWeight:'700' }}>{`${teams.B[0]} / ${teams.B[1]}`}</Text>
-    </View>
-  </View>
+    );
+  }
 
-    <View style={{ flexDirection:'row', marginTop:16 }}>
-      <Pressable onPress={()=>score(0)} disabled={!canScore} style={{ flex:1, backgroundColor:canScore?C.btnA:'#555', paddingVertical:12, borderRadius:10, marginRight:8, alignItems:'center' }}>
-        <Text style={{ color:'#fff', fontSize:16, fontWeight:'700' }}>主隊得分</Text>
-      </Pressable>
-      <Pressable onPress={()=>score(1)} disabled={!canScore} style={{ flex:1, backgroundColor:canScore?C.btnB:'#555', paddingVertical:12, borderRadius:10, marginLeft:8, alignItems:'center' }}>
-        <Text style={{ color:'#fff', fontSize:16, fontWeight:'700' }}>客隊得分</Text>
-      </Pressable>
-    </View>
+  const scoreA = snap?.scoreA ?? 0;
+  const scoreB = snap?.scoreB ?? 0;
 
-    <View style={{ flexDirection:'row', marginTop:12, justifyContent:'flex-end' }}>
-      <Pressable onPress={finishMatch} disabled={!canScore} style={{ paddingVertical:8, paddingHorizontal:12, backgroundColor:canScore?'#5d4037':'#555', borderRadius:10 }}>
-        <Text style={{ color:'#fff', fontWeight:'700' }}>結束比賽</Text>
-      </Pressable>
-    </View>
+  return (
+    <View style={{ flex:1, backgroundColor:C.bg, padding:12 }}>
+      <Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>{`第 ${courtNo} 場地 計分板`}</Text>
 
-    <Text style={{ color:C.sub, marginTop:10 }}>
-      {`發球方：${(snap?.servingTeam ?? 0) === 0 ? '主隊' : '客隊'}`}
-      {isMatchOver(state) ? '（比賽已可結束）' : ''}
-    </Text>
-  </View>
-</View>
-);
+      <View style={{ padding:10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:12, marginBottom:10, opacity: canScore?1:0.8 }}>
+        <Text style={{ color:C.sub, marginBottom:6 }}>{`規則（目前：到 ${pointsToWin} 分 · ${bestOf}局制 · ${deuce ? 'Deuce開' : 'Deuce關'}）`}</Text>
+        <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:6 }}>
+          <Chip text="P11" active={pointsToWin===11} onPress={() => applyRules({ pointsToWin: 11 })} />
+          <Chip text="P15" active={pointsToWin===15} onPress={() => applyRules({ pointsToWin: 15 })} />
+          <Chip text="P21" active={pointsToWin===21} onPress={() => applyRules({ pointsToWin: 21 })} />
+          <Chip text="P25" active={pointsToWin===25} onPress={() => applyRules({ pointsToWin: 25 })} />
+          <Chip text="P31" active={pointsToWin===31} onPress={() => applyRules({ pointsToWin: 31 })} />
+        </View>
+        <View style={{ flexDirection:'row', flexWrap:'wrap', marginBottom:6 }}>
+          <Chip text="BO1" active={bestOf===1} onPress={() => applyRules({ bestOf: 1 })} />
+          <Chip text="BO3" active={bestOf===3} onPress={() => applyRules({ bestOf: 3 })} />
+        </View>
+        <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
+          <Chip text={deuce ? 'Deuce 開' : 'Deuce 關'} active={deuce} onPress={() => applyRules({ winBy: deuce ? 1 : 2 })} />
+        </View>
+      </View>
+
+      <View style={{ padding:12, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:12 }}>
+        <View style={{ flexDirection:'row', justifyContent:'space-between', alignItems:'center' }}>
+          <View style={{ flex:1, alignItems:'center' }}>
+            <Text style={{ color:'#90caf9', fontSize:18, fontWeight:'700' }}>{`${teams.A[0]} / ${teams.A[1]}`}</Text>
+          </View>
+          <View style={{ width: 100, alignItems:'center' }}>
+            <Text style={{ color:'#fff', fontSize:28, fontWeight:'800' }}>{scoreA}</Text>
+            <Text style={{ color:C.sub }}>VS</Text>
+            <Text style={{ color:'#fff', fontSize:28, fontWeight:'800' }}>{scoreB}</Text>
+          </View>
+          <View style={{ flex:1, alignItems:'center' }}>
+            <Text style={{ color:'#ef9a9a', fontSize:18, fontWeight:'700' }}>{`${teams.B[0]} / ${teams.B[1]}`}</Text>
+          </View>
+        </View>
+
+        <View style={{ flexDirection:'row', marginTop:16 }}>
+          <Pressable onPress={()=>score(0)} disabled={!canScore} style={{ flex:1, backgroundColor:canScore?C.btnA:'#555', paddingVertical:12, borderRadius:10, marginRight:8, alignItems:'center' }}>
+            <Text style={{ color:'#fff', fontSize:16, fontWeight:'700' }}>主隊得分</Text>
+          </Pressable>
+          <Pressable onPress={()=>score(1)} disabled={!canScore} style={{ flex:1, backgroundColor:canScore?C.btnB:'#555', paddingVertical:12, borderRadius:10, marginLeft:8, alignItems:'center' }}>
+            <Text style={{ color:'#fff', fontSize:16, fontWeight:'700' }}>客隊得分</Text>
+          </Pressable>
+        </View>
+
+        <View style={{ flexDirection:'row', marginTop:12, justifyContent:'flex-end' }}>
+          <Pressable onPress={finishMatch} disabled={!canScore} style={{ paddingVertical:8, paddingHorizontal:12, backgroundColor:canScore?'#5d4037':'#555', borderRadius:10 }}>
+            <Text style={{ color:'#fff', fontWeight:'700' }}>結束比賽</Text>
+          </Pressable>
+        </View>
+
+        <Text style={{ color:C.sub, marginTop:10 }}>
+          {`發球方：${(snap?.servingTeam ?? 0) === 0 ? '主隊' : '客隊'}`}
+          {isMatchOver(state) ? '（比賽已可結束）' : ''}
+        </Text>
+      </View>
+    </View>
+  );
 }
 
 function Chip({ text, active, onPress }: { text:string; active?:boolean; onPress:()=>void }) {
-return (
-<Pressable
-onPress={onPress}
-style={{
-paddingVertical:6, paddingHorizontal:10, borderRadius:14,
-borderWidth:1, borderColor: active ? '#90caf9' : '#555',
-backgroundColor: active ? 'rgba(144,202,249,0.15)' : '#1f1f1f',
-marginRight:8, marginBottom:8
-}}
->
-<Text style={{ color:'#fff' }}>{text}</Text>
-</Pressable>
-);
-}
-
-ezbmt-tracked/src/screens/MatchMembersScreen.tsx
+  return (
+    <Pressable
+      onPress={onPress}
+      style={{
+        paddingVertical:6, paddingHorizontal:10, borderRadius:14,
+        borderWidth:1, borderColor: active ? '#90caf9' : '#555',
+        backgroundColor: active ? 'rgba(144,202,249,0.15)' : '#1f1f1f',
+        marginRight:8, marginBottom:8
+      }}
+    >
+      <Text style={{ color:'#fff' }}>{text}</Text>
+    </Pressable>
+  );
+}ezbmt-tracked/src/screens/MatchMembersScreen.tsx
  
 import React from 'react';
 import { View, Text, FlatList, Pressable, Alert, ScrollView } from 'react-native';
@@ -15611,7 +15930,234 @@ return (
   </View>
 </View>
 );
-}ezbmt-tracked/src/lib/webrtcSignal.ts
+}ezbmt-tracked/src/lib/push.ts
+ 
+export async function initPushIfAvailable() {
+  try {
+    // 動態載入，沒裝也不會拋錯
+    const messaging = require('@react-native-firebase/messaging').default;
+
+    // 申請權限（iOS 會彈窗；Android 自動允許）
+    try {
+      await messaging().requestPermission();
+    } catch {}
+
+    // 取得 token 並註冊到後端
+    let token: string | null = null;
+    try {
+      token = await messaging().getToken();
+    } catch {
+      token = null;
+    }
+    if (token) {
+      try {
+        const { registerDeviceToken } = require('../db');
+        await registerDeviceToken(token);
+      } catch {}
+    }
+
+    // token 變更時重新註冊
+    try {
+      messaging().onTokenRefresh(async (tok: string) => {
+        try {
+          const { registerDeviceToken } = require('../db');
+          await registerDeviceToken(tok);
+        } catch {}
+      });
+    } catch {}
+  } catch {
+    // 未安裝 @react-native-firebase/messaging 或環境不支援，略過即可
+  }
+}ezbmt-tracked/src/lib/exportSession.ts
+ 
+import { supa } from './supabase';
+import { Alert, Platform } from 'react-native';
+import Share from 'react-native-share';
+import RNFS from 'react-native-fs';
+import { shareCsv } from './exportPdf';
+
+type RoundRow = { id: string; index: number };
+type TeamNames = { a: string[]; b: string[] };
+
+type Row = {
+roundIndex: number;
+courtNo: number;
+teamA: string[];
+teamB: string[];
+scoreA?: number|null;
+scoreB?: number|null;
+winnerTeam?: 0|1|null;
+finishedAt?: string|null;
+};
+
+function getPdfConvert(): ((opts:any)=>Promise<any>) | undefined {
+try {
+const mod = require('react-native-html-to-pdf');
+const inst = mod?.default ?? mod;
+return inst?.convert;
+} catch {
+return undefined;
+}
+}
+
+function joinNames(list: string[]) { return (list || []).filter(Boolean).join('、'); }
+function safe(s: any) { return s == null ? '' : String(s); }
+
+export async function exportSessionCsv(sessionId: string): Promise<void> {
+const rows = await buildSessionRows(sessionId);
+const header = ['round_index', 'court_no', 'team_a', 'team_b', 'score_a', 'score_b', 'winner', 'finished_at'];
+const lines = [header.join(',')];
+
+rows.forEach((r) => {
+const winner = r.winnerTeam == null ? '' : (r.winnerTeam === 0 ? 'A' : 'B');
+const line = [
+r.roundIndex, r.courtNo,
+"${joinNames(r.teamA)}",
+"${joinNames(r.teamB)}",
+(r.scoreA ?? ''), (r.scoreB ?? ''),
+winner,
+r.finishedAt ? new Date(r.finishedAt).toISOString() : '',
+].join(',');
+lines.push(line);
+});
+
+const csv = lines.join('\n');
+await shareCsv(`session-${sessionId}`, csv);
+}
+
+export async function exportSessionPdf(sessionId: string): Promise<void> {
+const rows = await buildSessionRows(sessionId);
+const group = new Map<number, Row[]>();
+rows.forEach((r) => {
+if (!group.has(r.roundIndex)) group.set(r.roundIndex, []);
+group.get(r.roundIndex)!.push(r);
+});
+
+const parts: string[] = [];
+parts.push(`
+
+<html><head><meta charset="utf-8"/> <style> body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica,Arial,sans-serif;padding:16px;} h1{font-size:20px;margin:0 0 12px 0;} h2{font-size:16px;margin:16px 0 8px 0;} table{border-collapse:collapse;width:100%;} th,td{border:1px solid #ddd;padding:6px;font-size:12px;} .muted{color:#777;} </style> </head><body> <h1>Session Summary</h1> `);
+Array.from(group.keys()).sort((a,b)=>a-b).forEach((idx) => {
+const arr = group.get(idx) || [];
+parts.push(`<h2>第 ${idx} 輪</h2>`);
+parts.push('<table><tr><th>場地</th><th>A隊</th><th>B隊</th><th>比分</th><th>勝方</th><th>結束時間</th></tr>');
+arr.forEach((r) => {
+const score = (r.scoreA == null || r.scoreB == null) ? '-' : `${r.scoreA}:${r.scoreB}`;
+const win = r.winnerTeam == null ? '-' : (r.winnerTeam === 0 ? 'A' : 'B');
+const fin = r.finishedAt ? new Date(r.finishedAt).toLocaleString() : '';
+parts.push(`<tr>         <td>${r.courtNo}</td>         <td>${joinNames(r.teamA)}</td>         <td>${joinNames(r.teamB)}</td>         <td>${score}</td>         <td>${win}</td>         <td>${fin}</td>       </tr>`);
+});
+parts.push('</table>');
+});
+
+if (group.size === 0) {
+parts.push(`<p class="muted">尚無任何輪次/對戰資料</p>`);
+}
+
+parts.push('</body></html>');
+const html = parts.join('\n');
+
+const convert = getPdfConvert();
+if (typeof convert !== 'function') {
+throw new Error('RNHTMLtoPDF 不可用（模組未連結或尚未重編譯）');
+// 你也可以改成 Alert.alert(...)，但這裡丟錯讓呼叫端去 catch
+}
+
+const fileBase = `session-${String(sessionId).replace(/[^a-zA-Z0-9_-]/g,'-')}-${Date.now()}`;
+const directory = Platform.OS === 'android' ? 'Download' : 'Documents';
+const res = await convert({ html, fileName: fileBase, base64: false, directory });
+
+const rawPath = res?.filePath;
+if (!rawPath) throw new Error('PDF 產生失敗（未取得檔案路徑）');
+const url = rawPath.startsWith('file://') ? rawPath : `file://${rawPath}`;
+
+try {
+await Share.open({
+url,
+type: 'application/pdf',
+filename: `${fileBase}.pdf`,
+failOnCancel: false,
+showAppsToView: true,
+});
+} catch (e) {
+const msg = String((e as any)?.message || e).toLowerCase();
+if (msg.includes('cancel')) return;
+throw e;
+}
+}
+
+/** 聚合 session 下的所有輪與對戰結果 */
+async function buildSessionRows(sessionId: string): Promise<Row[]> {
+const { data: roundsData } = await supa
+.from('session_rounds')
+.select('id,index_no')
+.eq('session_id', sessionId)
+.order('index_no', { ascending: true });
+
+const rounds: RoundRow[] = (roundsData || []).map((r: any) => ({ id: String(r.id), index: Number(r.index_no || 0) }));
+if (!rounds.length) return [];
+const roundIds = rounds.map(r => r.id);
+
+const { data: rms } = await supa
+.from('round_matches')
+.select('round_id,court_no,team_a,team_b')
+.in('round_id', roundIds as any);
+
+const { data: rrs } = await supa
+.from('round_results')
+.select('round_id,court_no,score_home,score_away,winner_team,finished_at')
+.in('round_id', roundIds as any);
+
+const matchMap = new Map<string, TeamNames>();
+(rms || []).forEach((m: any) => {
+const key = `${m.round_id}#${Number(m.court_no)}`;
+const a = ((m.team_a?.players) || []).map((p: any) => String(p?.name || ''));
+const b = ((m.team_b?.players) || []).map((p: any) => String(p?.name || ''));
+matchMap.set(key, { a, b });
+});
+
+const resultMap = new Map<string, { a?: number|null; b?: number|null; w?: 0|1|null; fin?: string|null }>();
+(rrs || []).forEach((r: any) => {
+const key = `${r.round_id}#${Number(r.court_no)}`;
+resultMap.set(key, {
+a: (r.score_home == null ? null : Number(r.score_home)),
+b: (r.score_away == null ? null : Number(r.score_away)),
+w: (r.winner_team == null ? null : Number(r.winner_team)) as 0|1|null,
+fin: r.finished_at ? String(r.finished_at) : null,
+});
+});
+
+const allCourtNos = new Set<number>();
+(rms || []).forEach((m: any) => allCourtNos.add(Number(m.court_no)));
+(rrs || []).forEach((r: any) => allCourtNos.add(Number(r.court_no)));
+if (allCourtNos.size === 0) return [];
+
+const rows: Row[] = [];
+rounds.forEach((r) => {
+const courtNos = Array.from(allCourtNos).sort((a,b)=>a-b);
+courtNos.forEach((c) => {
+const key = `${r.id}#${c}`;
+const names = matchMap.get(key) || { a: [], b: [] };
+const res = resultMap.get(key) || {};
+rows.push({
+roundIndex: r.index,
+courtNo: c,
+teamA: names.a,
+teamB: names.b,
+scoreA: res.a ?? null,
+scoreB: res.b ?? null,
+winnerTeam: res.w ?? null,
+finishedAt: res.fin ?? null,
+});
+});
+});
+
+const filtered = rows.filter(r => (r.teamA.length || r.teamB.length));
+filtered.sort((x,y)=> x.roundIndex===y.roundIndex ? (x.courtNo-y.courtNo) : (x.roundIndex-y.roundIndex));
+return filtered;
+}
+
+ezbmt-tracked/src/lib/webrtcSignal.ts
  
 import { supa } from './supabase';
 
@@ -15872,13 +16418,14 @@ ezbmt-tracked/src/lib/pairingPrefs.ts
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type PairingPrefs = {
-courts: string;                 // 球場數（字串方便直接綁 TextInput）
-teamSize: '1' | '2';            // 單打/雙打
-roundMinutes: string;           // 每輪(分)
-partnerCooldown: string;        // 搭檔冷卻輪
-opponentWindow: string;         // 對手避免(輪)
-maxLevelDiffPerPair: string;    // 同隊等級差上限
-preferMixed: boolean;           // 混雙偏好
+courts: string;
+teamSize: '1' | '2';
+roundMinutes: string;
+partnerCooldown: string;
+opponentWindow: string;
+maxLevelDiffPerPair: string;
+preferMixed: boolean;
+restCooldown: string;  // 新增
 };
 
 const keyOf = (sessionId: string) => `pairing:prefs:${sessionId}`;
@@ -15902,7 +16449,9 @@ await AsyncStorage.setItem(keyOf(sessionId), JSON.stringify(prefs));
 
 export async function clearPrefs(sessionId: string): Promise<void> {
 try { await AsyncStorage.removeItem(keyOf(sessionId)); } catch {}
-}ezbmt-tracked/src/lib/deviceId.ts
+}
+
+ezbmt-tracked/src/lib/deviceId.ts
  
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { v4 as uuidv4 } from 'uuid';
@@ -15958,8 +16507,19 @@ if (timer) clearInterval(timer);
 }ezbmt-tracked/src/lib/export.ts
  
 import { Platform } from 'react-native';
-import * as RNHTMLtoPDF from 'react-native-html-to-pdf';
 import Share from 'react-native-share';
+import RNFS from 'react-native-fs';
+
+// 動態載入（default 優先）；沒有就回傳 undefined
+function getPdfConvert(): ((opts:any)=>Promise<any>) | undefined {
+try {
+const mod = require('react-native-html-to-pdf');
+const inst = mod?.default ?? mod;
+return inst?.convert;
+} catch {
+return undefined;
+}
+}
 
 function esc(s: any) {
 return String(s == null ? '' : s)
@@ -16014,14 +16574,14 @@ return rows.map(r => {
 const total = r.win + r.loss;
 const widthPct = Math.round(total / max * 100);
 const winPct = total ? Math.round(r.win / total * 100) : 0;
-return       `<div style="margin-bottom:8px">         <div style="display:flex;justify-content:space-between;margin-bottom:2px">           <span>${esc(r.label)}</span><span style="color:#555">${total} 次</span>         </div>         <div style="height:12px;background:#eee;border-radius:6px;overflow:hidden">           <div style="width:${widthPct}%;height:100%;background:#ffcdd2">             <div style="width:${winPct}%;height:100%;background:#90caf9"></div>           </div>         </div>       </div>    `;
+return `<div style="margin-bottom:8px">       <div style="display:flex;justify-content:space-between;margin-bottom:2px">         <span>${esc(r.label)}</span><span style="color:#555">${total} 次</span>       </div>       <div style="height:12px;background:#eee;border-radius:6px;overflow:hidden">         <div style="width:${widthPct}%;height:100%;background:#ffcdd2">           <div style="width:${winPct}%;height:100%;background:#90caf9"></div>         </div>       </div>     </div>`;
 }).join('\n');
 }
 
 function routeThumbs(th: Array<{ sx:number; sy:number; ex:number; ey:number; kind:'win'|'loss' }>, cols=4, size=150) {
 const items = th.map((r) => {
 const color = r.kind==='win'?'#1976d2':'#d32f2f';
-return       `<div style="width:${size}px;height:${Math.round(size*13.4/6.1)}px;border-radius:8px;overflow:hidden;background:#e8f5e9;margin:6px">         <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${Math.round(size*13.4/6.1)}" viewBox="0 0 ${size} ${Math.round(size*13.4/6.1)}">           <line x1="${r.sx*size}" y1="${r.sy*Math.round(size*13.4/6.1)}" x2="${r.ex*size}" y2="${r.ey*Math.round(size*13.4/6.1)}" stroke="${color}" stroke-width="4" stroke-dasharray="8,6" opacity="0.7" />         </svg>       </div>    `;
+return `<div style="width:${size}px;height:${Math.round(size*13.4/6.1)}px;border-radius:8px;overflow:hidden;background:#e8f5e9;margin:6px">       <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${Math.round(size*13.4/6.1)}" viewBox="0 0 ${size} ${Math.round(size*13.4/6.1)}">         <line x1="${r.sx*size}" y1="${r.sy*Math.round(size*13.4/6.1)}" x2="${r.ex*size}" y2="${r.ey*Math.round(size*13.4/6.1)}" stroke="${color}" stroke-width="4" stroke-dasharray="8,6" opacity="0.7" />       </svg>     </div>`;
 }).join('\n');
 return `<div style="display:flex;flex-wrap:wrap">${items}</div>`;
 }
@@ -16065,14 +16625,13 @@ const html =
     ${thumbs ? '<h2>球路縮圖（前 12 球）</h2>'+thumbs : ''}
   </body></html>`;
 
-// 指定輸出目錄（Android: Download；iOS: Documents）
+const convert = getPdfConvert();
+if (typeof convert !== 'function') {
+  throw new Error('RNHTMLtoPDF 不可用（模組未連結或尚未重編譯）');
+}
+
 const directory = Platform.OS === 'android' ? 'Download' : 'Documents';
 const fileBase = `match-${String(matchId).replace(/[^a-zA-Z0-9_-]/g,'-')}-${Date.now()}`;
-
-const convert = (RNHTMLtoPDF as any).convert;
-if (typeof convert !== 'function') {
-  throw new Error('RNHTMLtoPDF.convert 不可用，請確認套件安裝與連結');
-}
 
 const res = await convert({
   html,
@@ -16085,22 +16644,13 @@ const rawPath = res?.filePath;
 if (!rawPath) throw new Error('PDF 產生失敗（未取得檔案路徑）');
 
 const url = rawPath.startsWith('file://') ? rawPath : `file://${rawPath}`;
-
-try {
-  await Share.open({
-    url,
-    type: 'application/pdf',
-    filename: `${fileBase}.pdf`,
-    failOnCancel: false,
-    showAppsToView: true,
-  });
-} catch (e: any) {
-  const msg = String(e?.message || e).toLowerCase();
-  if (msg.includes('cancel')) {
-    return { path: url, cancelled: true };
-  }
-  throw e;
-}
+await Share.open({
+  url,
+  type: 'application/pdf',
+  filename: `${fileBase}.pdf`,
+  failOnCancel: false,
+  showAppsToView: true,
+});
 
 return { path: url, cancelled: false };
 } catch (err: any) {
@@ -17359,27 +17909,50 @@ if (error) throw error;
 }
 
 export async function listSignups(sessionId: string): Promise<Array<{ id:string; user_id:string; name?:string|null; email?:string|null; created_at:string }>> {
-const { data, error } = await supa
-.from('sessions_signups')
-.select('id,user_id,created_at')
-.eq('session_id', sessionId)
-.order('created_at', { ascending: false });
+// 改用安全 RPC：list_signups_with_names
+const { data, error } = await supa.rpc('list_signups_with_names', { p_session_id: sessionId });
 if (error) throw error;
-const rows = (data || []) as Array<{ id:string; user_id:string; created_at:string }>;
-const ids = Array.from(new Set(rows.map(r => r.user_id))).filter(Boolean);
-let meta: Record<string, { name?: string|null; email?: string|null }> = {};
-if (ids.length) {
-const { data: prof } = await supa.from('profiles').select('id,name,email').in('id', ids as any);
-(prof || []).forEach((p:any) => { meta[p.id] = { name: p?.name || null, email: p?.email || null }; });
-}
-return rows.map(r => ({ id:r.id, user_id:r.user_id, created_at:r.created_at, name: meta[r.user_id]?.name || null, email: meta[r.user_id]?.email || null }));
+
+// 保底 fallback（極端狀況仍確保不出現「未命名」）
+const rows = (data || []) as Array<{ id:string; user_id:string; name?:string|null; email?:string|null; created_at:string }>;
+return rows.map(r => {
+const safeName =
+(r.name && String(r.name).trim()) ||
+(r.email ? String(r.email).split('@')[0] : (r.user_id ? r.user_id.slice(0,8)+'…' : 'Anon'));
+return { ...r, name: safeName };
+});
 }
 
 export async function signupSession(sessionId: string): Promise<void> {
 const { data: me } = await supa.auth.getUser();
 const uid = me?.user?.id;
+const uEmail = me?.user?.email || null;
 if (!uid) throw new Error('Not logged in');
-const { error } = await supa.from('sessions_signups').insert({ session_id: sessionId, user_id: uid });
+
+// 嘗試補 profiles 基本資料（若沒有 name，補 email 前綴；若沒有 email，補 auth 的 email）
+try {
+const { data: prof } = await supa
+.from('profiles')
+.select('id,name,email')
+.eq('id', uid)
+.maybeSingle();
+
+let newName = (prof?.name && String(prof.name).trim()) || '';
+let newEmail = (prof?.email && String(prof.email).trim()) || '';
+
+if (!newName && uEmail) newName = uEmail.split('@')[0];
+if (!newEmail && uEmail) newEmail = uEmail;
+
+if ((newName && newName !== (prof?.name || '')) || (newEmail && newEmail !== (prof?.email || ''))) {
+  await supa.from('profiles').upsert({ id: uid, name: newName || null, email: newEmail || null });
+}
+} catch {
+// 若 RLS 限制或表結構不同，略過不拋錯
+}
+
+const { error } = await supa
+.from('sessions_signups')
+.insert({ session_id: sessionId, user_id: uid });
 if (error) throw error;
 }
 
@@ -17560,6 +18133,10 @@ export const listMyInviteContactsWithNames = (supaDao as any).listMyInviteContac
 //export const signupSession = (supaDao as any).signupSession;
 //export const cancelSignup = (supaDao as any).cancelSignup;
 //export const deleteSignup = (supaDao as any).deleteSignup;
+export const subscribeSessionNotification = (supaDao as any).subscribeSessionNotification;
+export const unsubscribeSessionNotification = (supaDao as any).unsubscribeSessionNotification;
+export const listSessionSubscriptions = (supaDao as any).listSessionSubscriptions;
+export const registerDeviceToken = (supaDao as any).registerDeviceToken;
 ezbmt-tracked/src/db/supa.ts
  
 import { supa, SUPABASE_URL } from '../lib/supabase';
@@ -18085,9 +18662,20 @@ const { data, error } = await supa.from('sessions').select('id,date,courts,round
 if (error) throw error;
 return data || [];
 }
+
 export async function createSession(args: { clubId: string; date: string; courts: number; roundMinutes: number }) {
+// 取目前登入者
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+
+// 帶入 created_by 以符合 RLS
 const { error } = await supa.from('sessions').insert({
-club_id: args.clubId, date: args.date, courts: args.courts, round_minutes: args.roundMinutes
+club_id: args.clubId,
+date: args.date,
+courts: args.courts,
+round_minutes: args.roundMinutes,
+created_by: uid,
 });
 if (error) throw error;
 }
@@ -18558,6 +19146,76 @@ const { error } = await supa
 if (error) throw error;
 }
 
+// ========== Notifications: push_subscriptions / device_tokens ==========
+
+/** 追蹤某場次（sessionId）通知：在 push_subscriptions 寫入 kind='event', target_id=sessionId */
+export async function subscribeSessionNotification(sessionId: string): Promise<void> {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+
+// upsert（需在資料庫有 unique index: (kind, target_id, user_id)）
+const { error } = await supa
+.from('push_subscriptions')
+.upsert(
+{ kind: 'event', target_id: sessionId, user_id: uid },
+{ onConflict: 'kind,target_id,user_id' }
+);
+if (error) throw error;
+}
+
+/** 取消追蹤某場次（sessionId）通知 */
+export async function unsubscribeSessionNotification(sessionId: string): Promise<void> {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+
+const { error } = await supa
+.from('push_subscriptions')
+.delete()
+.eq('kind', 'event')
+.eq('target_id', sessionId)
+.eq('user_id', uid);
+if (error) throw error;
+}
+
+/** 查詢我對多個場次是否有追蹤通知 */
+export async function listSessionSubscriptions(sessionIds: string[]): Promise<Record<string, boolean>> {
+const map: Record<string, boolean> = {};
+if (!sessionIds.length) return map;
+
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) return map;
+
+const { data, error } = await supa
+.from('push_subscriptions')
+.select('target_id')
+.eq('kind', 'event')
+.eq('user_id', uid)
+.in('target_id', sessionIds as any);
+if (error) return map;
+
+(data || []).forEach((r: any) => { map[String(r.target_id)] = true; });
+return map;
+}
+
+/** 註冊裝置的推播 token（之後整合 FCM/Expo 用） */
+export async function registerDeviceToken(token: string): Promise<void> {
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) throw new Error('Not logged in');
+if (!token) throw new Error('empty token');
+
+// upsert（建議資料庫有 unique index on token 或 (user_id, token)）
+const { error } = await supa
+.from('device_tokens')
+.upsert(
+{ user_id: uid, token },
+{ onConflict: 'token' }
+);
+if (error) throw error;
+}
 
 ezbmt-tracked/src/global.d.ts
  

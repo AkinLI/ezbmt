@@ -3,7 +3,7 @@ import { View, Text, Pressable, TextInput, Alert, ScrollView, ActivityIndicator 
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { listSessionAttendees, listRounds, upsertRound, getSession, setRoundStatus, upsertRoundCourts } from '../db';
 import type { Attendee, RoundRow, RoundMatch } from '../db/supa_club';
-import { pairRound, AttendeeLite, Constraints } from '../club/pairing';
+import { pairRound, AttendeeLite, Constraints, Team } from '../club/pairing';
 import { getPrefs, savePrefs, clearPrefs, type PairingPrefs } from '../lib/pairingPrefs';
 import { supa } from '../lib/supabase';
 import { getMyClubRole } from '../db';
@@ -35,7 +35,7 @@ const [maxLevelDiffPerPair, setMaxLevelDiffPerPair] = React.useState('5');
 const [preferMixed, setPreferMixed] = React.useState(false);
 const [restCooldown, setRestCooldown] = React.useState('1'); // 新增：上/下場冷卻輪
 
-const [preview, setPreview] = React.useState<null | { matches: Array<{ teamA:any; teamB:any }>; waiting: any[] }>(null);
+const [preview, setPreview] = React.useState<null | { matches: Array<{ teamA: Team; teamB: Team }>; waiting: any[] }>(null);
 const [genBusy, setGenBusy] = React.useState(false);
 const [publishBusy, setPublishBusy] = React.useState(false);
 const [savingPrefs, setSavingPrefs] = React.useState(false);
@@ -125,7 +125,7 @@ try {
 const candidates = atts.map(toLite);
 const cons: Constraints = {
 courts: Math.max(1, Number(courts||'1')),
-teamSize: (teamSize==='1' ? 1 : 2),
+teamSize: (teamSize==='1' ? 1 : 2) as 1|2,
 partnerCooldown: Math.max(0, Number(partnerCooldown||'0')),
 opponentWindow: Math.max(0, Number(opponentWindow||'0')),
 maxLevelDiffPerPair: Math.max(0, Number(maxLevelDiffPerPair||'0')),
@@ -281,16 +281,98 @@ s === 'finished' ? '#757575' : '#555';
 return { borderColor: color, bg: `${color}22`, color };
 };
 
+// 顯示參與者名單（簡單列表）
+const renderAttendees = () => {
+if (!atts?.length) return <Text style={{ color: C.sub }}>目前沒有報到名單</Text>;
+const list = [...atts].sort((a,b)=> String(a.display_name||'').localeCompare(String(b.display_name||'')));
+return (
+<View>
+<Text style={{ color:C.text, fontWeight:'700', marginBottom:6 }}>{`參與者（${list.length}）`}</Text>
+<View>
+{list.map(a => (
+<View key={a.id} style={{ paddingVertical:6, borderBottomWidth:1, borderColor:'#2b2b2b' }}>
+<Text style={{ color:'#fff' }}>
+{a.display_name || a.buddy_id?.slice(0,6) + '…' || a.id.slice(0,6)+'…'}
+{typeof a.level === 'number' ? `（Lv ${a.level}）` : ''}
+</Text>
+</View>
+))}
+</View>
+</View>
+);
+};
+
+// 顯示預覽（matches + waiting）
+const renderPreview = () => {
+if (!preview) return null;
+const teamNames = (t?: Team) => (t?.players || []).map(p => p?.name || '').filter(Boolean).join('、 ');
+const waitingUnique = (() => {
+const seen = new Set<string>();
+const out: any[] = [];
+(preview.waiting || []).forEach((w: any) => {
+const id = String(w?.id || '');
+if (!id || seen.has(id)) return;
+seen.add(id);
+out.push(w);
+});
+return out;
+})();
+
+return (
+  <View style={{ marginTop: 12, padding:10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:10 }}>
+    <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+      <Text style={{ color:'#fff', fontWeight:'700' }}>{`預覽對戰（${preview.matches.length} 場）`}</Text>
+      <Pressable onPress={()=>setPreview(null)} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:8, borderWidth:1, borderColor:'#555' }}>
+        <Text style={{ color:'#90caf9' }}>清空預覽</Text>
+      </Pressable>
+    </View>
+
+    {preview.matches.length === 0 ? (
+      <Text style={{ color:'#bbb', marginTop:6 }}>尚未有可排對戰（人數不足或限制過嚴）</Text>
+    ) : (
+      <View style={{ marginTop: 6 }}>
+        {preview.matches.map((m, i) => (
+          <View key={'pv-'+i} style={{ paddingVertical:8, borderBottomWidth:1, borderColor:'#2b2b2b' }}>
+            <Text style={{ color:'#ccc', marginBottom:4 }}>{`場地 ${i+1}（暫定）`}</Text>
+            <Text style={{ color:'#90caf9', fontWeight:'700' }}>{teamNames(m.teamA)}</Text>
+            <Text style={{ color:'#ddd', textAlign:'center', marginVertical:4 }}>VS</Text>
+            <Text style={{ color:'#ef9a9a', fontWeight:'700' }}>{teamNames(m.teamB)}</Text>
+          </View>
+        ))}
+      </View>
+    )}
+
+    <View style={{ marginTop: 10 }}>
+      <Text style={{ color:'#fff', fontWeight:'700', marginBottom:6 }}>{`等待名單（${waitingUnique.length}）`}</Text>
+      {waitingUnique.length === 0 ? (
+        <Text style={{ color:'#bbb' }}>目前沒有等待的球友</Text>
+      ) : (
+        <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
+          {waitingUnique.map((w) => (
+            <View key={'w-'+String(w?.id||Math.random())} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:14, borderWidth:1, borderColor:'#555', backgroundColor:'#1f1f1f', marginRight:8, marginBottom:8 }}>
+              <Text style={{ color:'#fff' }}>{w?.name || String(w?.id||'').slice(0,6)+'…'}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+    </View>
+  </View>
+);
+};
+
 return (
 <ScrollView style={{ flex:1, backgroundColor:C.bg }} contentContainerStyle={{ padding:12 }}>
 <Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>
 社團排點{sessionDate ? `（${sessionDate}）` : ''}
 </Text>
 
-  <Text style={{ color:C.sub, marginBottom:6 }}>{`參與者（${atts.length}）`}</Text>
+  {/* 參與者清單 */}
+  <View style={{ padding:10, backgroundColor:C.card, borderRadius:10, borderColor:C.border, borderWidth:1, marginBottom:10 }}>
+    {renderAttendees()}
+  </View>
 
   {/* 參數區 */}
-  <View style={{ padding:10, backgroundColor:C.card, borderRadius:10, borderColor:C.border, borderWidth:1, marginTop:10 }}>
+  <View style={{ padding:10, backgroundColor:C.card, borderRadius:10, borderColor:C.border, borderWidth:1, marginTop:0 }}>
     <Text style={{ color:C.text, fontWeight:'700', marginBottom:8 }}>參數</Text>
     <View style={{ flexDirection:'row', flexWrap:'wrap', opacity: canPair ? 1 : 0.5 }}>
       <Param title="球場數" v={courts} setV={canPair?setCourts:()=>{}} />
@@ -326,8 +408,58 @@ return (
     <Btn text={publishBusy ? '發布中…' : `發布第${nowIndex+1}輪`} onPress={publish} disabled={!preview || publishBusy || !canPair} />
   </View>
 
-  {/* 預覽、歷史輪（省略，沿用你現有版面） */}
-  {/* ... 保持原內容 ... */}
+  {/* 預覽結果 */}
+  {renderPreview()}
+
+  {/* 歷史輪（維持原有；如需也可補完整呈現） */}
+  <View style={{ marginTop: 12 }}>
+    <Text style={{ color:'#fff', fontWeight:'700', marginBottom:6 }}>歷史輪</Text>
+    {rounds.length === 0 ? (
+      <Text style={{ color:'#888' }}>尚無輪次</Text>
+    ) : (
+      rounds.map(r => {
+        const st = statusChipStyle(r.status);
+        return (
+          <View key={r.id} style={{ padding:10, backgroundColor:C.card, borderWidth:1, borderColor:C.border, borderRadius:10, marginBottom:8 }}>
+            <View style={{ flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}>
+              <Text style={{ color:'#fff', fontWeight:'700' }}>{`第 ${r.index_no} 輪`}</Text>
+              <View style={{ paddingVertical:4, paddingHorizontal:8, borderRadius:10, borderWidth:1, borderColor: st.borderColor, backgroundColor: st.bg }}>
+                <Text style={{ color: st.color }}>{statusLabel(r.status)}</Text>
+              </View>
+            </View>
+            {r.matches?.length ? (
+              <View style={{ marginTop:6 }}>
+                {r.matches.map((m:any, idx:number) => (
+                  <View key={r.id+'-'+idx} style={{ paddingVertical:6, borderBottomWidth:1, borderColor:'#2b2b2b' }}>
+                    <Text style={{ color:'#ccc' }}>{`場地 ${m.court_no}`}</Text>
+                    <Text style={{ color:'#90caf9', fontWeight:'700' }}>
+                      {(m.team_a?.players||[]).map((p:any)=>p.name).filter(Boolean).join('、 ')}
+                    </Text>
+                    <Text style={{ color:'#ddd', textAlign:'center', marginVertical:4 }}>VS</Text>
+                    <Text style={{ color:'#ef9a9a', fontWeight:'700' }}>
+                      {(m.team_b?.players||[]).map((p:any)=>p.name).filter(Boolean).join('、 ')}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            ) : (
+              <Text style={{ color:'#888', marginTop:6 }}>尚無對戰資料</Text>
+            )}
+            {canPair && (
+              <View style={{ flexDirection:'row', marginTop:8 }}>
+                <Pressable onPress={()=>onMarkOngoing(r.id)} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:8, backgroundColor:'#2e7d32', marginRight:8 }}>
+                  <Text style={{ color:'#fff' }}>設為進行中</Text>
+                </Pressable>
+                <Pressable onPress={()=>onMarkFinished(r.id)} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:8, backgroundColor:'#616161' }}>
+                  <Text style={{ color:'#fff' }}>設為已結束</Text>
+                </Pressable>
+              </View>
+            )}
+          </View>
+        );
+      })
+    )}
+  </View>
 </ScrollView>
 );
 }

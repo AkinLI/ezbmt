@@ -38,6 +38,15 @@ import WebCamScreen from './screens/WebCamScreen';
 import WebCamViewerScreen from './screens/WebCamViewerScreen';
 import ClubAudienceBoardScreen from './screens/ClubAudienceBoardScreen';
 import SessionSignupsScreen from './screens/SessionSignupsScreen';
+import ClubPostsScreen from './screens/ClubPostsScreen';
+import ClubJoinRequestsScreen from './screens/ClubJoinRequestsScreen';
+import ClubPollsScreen from './screens/ClubPollsScreen';
+import ClubPollDetailScreen from './screens/ClubPollDetailScreen';
+import ClubEventsScreen from './screens/ClubEventsScreen';
+import ClubEventDetailScreen from './screens/ClubEventDetailScreen';
+import ClubFeesScreen from './screens/ClubFeesScreen';
+import ClubFeeDetailScreen from './screens/ClubFeeDetailScreen';
+import ClubFeeReportScreen from './screens/ClubFeeReportScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -94,6 +103,15 @@ screenOptions={{ headerBackTitle: '', ...headerDark }}
 <Stack.Screen name="WebCamViewer" component={WebCamViewerScreen} options={{ title: '觀看 CAM' }} />
 <Stack.Screen name="ClubBoardAudience" component={ClubAudienceBoardScreen} options={{ title: '看板（唯讀）' }} />
 <Stack.Screen name="SessionSignups" component={SessionSignupsScreen} options={{ title: '報名/候補名單' }} />
+<Stack.Screen name="ClubPosts" component={ClubPostsScreen} options={{ title: '公告/貼文' }} />
+<Stack.Screen name="ClubJoinRequests" component={ClubJoinRequestsScreen} options={{ title: '加入申請審核' }} />
+<Stack.Screen name="ClubPolls" component={ClubPollsScreen} options={{ title: '社團投票' }} />
+<Stack.Screen name="ClubPollDetail" component={ClubPollDetailScreen} options={{ title: '投票' }} />
+<Stack.Screen name="ClubEvents" component={ClubEventsScreen} options={{ title: '社團活動' }} />
+<Stack.Screen name="ClubEventDetail" component={ClubEventDetailScreen} options={{ title: '活動' }} />
+<Stack.Screen name="ClubFees" component={ClubFeesScreen} options={{ title: '社團收費' }} />
+<Stack.Screen name="ClubFeeDetail" component={ClubFeeDetailScreen} options={{ title: '費用明細' }} />
+<Stack.Screen name="ClubFeeReport" component={ClubFeeReportScreen} options={{ title: '收費報表' }} />
 </Stack.Navigator>
 );
 }

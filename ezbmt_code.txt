@@ -847,6 +847,79 @@ return json({ ok: true, userId: targetId }, 200)
 const msg = (e as any)?.message || String(e)
 return json({ error: msg }, 500)
 }
+})ezbmt-tracked/supabase/functions/create-club/index.ts
+ 
+// @ts-nocheck
+/// <reference lib="deno.ns" />
+/// <reference lib="dom" />
+
+import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+function json(body: unknown, status = 200) {
+return new Response(JSON.stringify(body), {
+status,
+headers: { 'content-type': 'application/json' },
+})
+}
+
+serve(async (req: Request) => {
+try {
+// 支援 PROJECT_URL/ANON_KEY/SERVICE_ROLE_KEY（與你現有 Functions 一致）
+const SUPABASE_URL =
+Deno.env.get('PROJECT_URL') ?? Deno.env.get('SUPABASE_URL')
+const ANON_KEY =
+Deno.env.get('ANON_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY')
+const SERVICE_KEY =
+Deno.env.get('SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+
+if (!SUPABASE_URL || !ANON_KEY || !SERVICE_KEY) {
+  return json({ error: 'Missing env: PROJECT_URL/ANON_KEY/SERVICE_ROLE_KEY' }, 500)
+}
+
+// 必須帶 Authorization: Bearer <jwt>
+const authHeader = req.headers.get('Authorization') || ''
+const jwt = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+if (!jwt) return json({ error: 'unauthorized' }, 401)
+
+const body = await req.json().catch(() => ({}))
+const name = String((body?.name || '')).trim()
+const description = (body?.description == null ? null : String(body.description))
+if (!name) return json({ error: 'missing name' }, 400)
+
+// 使用者身分
+const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+  global: { headers: { Authorization: `Bearer ${jwt}` } },
+})
+const { data: me } = await userClient.auth.getUser()
+const uid = me?.user?.id
+if (!uid) return json({ error: 'unauthorized' }, 401)
+
+// 管理端（繞過 RLS）
+const admin = createClient(SUPABASE_URL, SERVICE_KEY)
+
+// 插入社團
+const { data: club, error: ce } = await admin
+  .from('clubs')
+  .insert({ name, description: description ?? null })
+  .select('id')
+  .single()
+if (ce) return json({ error: ce.message }, 400)
+
+// 建立者加為 owner（若已存在則覆寫角色）
+const { error: me2 } = await admin
+  .from('club_members')
+  .upsert(
+    { club_id: club.id as string, user_id: uid, role: 'owner' },
+    { onConflict: 'club_id,user_id' },
+  )
+if (me2) return json({ error: me2.message }, 400)
+
+return json({ ok: true, id: club.id }, 200)
+} catch (e) {
+const msg = (e as any)?.message || String(e)
+return json({ error: msg }, 500)
+}
 })ezbmt-tracked/supabase/functions/invite-club-by-email/index.ts
  
 // @ts-nocheck
@@ -2116,7 +2189,94 @@ return new Response(JSON.stringify({ path, signedUrl: data.signedUrl }), { statu
 return new Response(String(e?.message || e), { status: 500 })
 }
 })
-ezbmt-tracked/src/supabase/functions/send_notify/index.ts
+ezbmt-tracked/src/supabase/functions/create-club/index.ts
+ 
+// @ts-nocheck
+/// <reference lib="dom" />
+/// <reference lib="deno.ns" />
+
+import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+function json(body: unknown, status = 200) {
+return new Response(JSON.stringify(body), {
+status,
+headers: { 'content-type': 'application/json' },
+})
+}
+
+serve(async (req: Request) => {
+try {
+const SUPABASE_URL =
+Deno.env.get('PROJECT_URL') ?? Deno.env.get('SUPABASE_URL')
+const ANON_KEY =
+Deno.env.get('ANON_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY')
+const SERVICE_KEY =
+Deno.env.get('SERVICE_ROLE_KEY') ?? Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+
+if (!SUPABASE_URL || !ANON_KEY || !SERVICE_KEY) {
+  return json({ error: 'Missing env: PROJECT_URL/ANON_KEY/SERVICE_ROLE_KEY' }, 500)
+}
+
+// 需要前端帶 JWT
+const authHeader = req.headers.get('Authorization') || ''
+const jwt = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null
+if (!jwt) return json({ error: 'unauthorized: missing Authorization' }, 401)
+
+const body = await req.json().catch(() => ({}))
+const name = String(body?.name || '').trim()
+const description = body?.description == null ? null : String(body.description)
+if (!name) return json({ error: 'missing name' }, 400)
+
+// 驗證使用者
+const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+  global: { headers: { Authorization: `Bearer ${jwt}` } },
+})
+const { data: me, error: meErr } = await userClient.auth.getUser()
+if (meErr) return json({ error: 'auth.getUser failed', detail: meErr.message }, 401)
+const uid = me?.user?.id
+if (!uid) return json({ error: 'unauthorized: no user' }, 401)
+
+// Admin client（繞 RLS）
+const admin = createClient(SUPABASE_URL, SERVICE_KEY)
+
+// 1) 建立社團
+const { data: club, error: ce } = await admin
+  .from('clubs')
+  .insert({ name, description })
+  .select('id')
+  .single()
+if (ce) return json({ error: 'insert clubs failed', detail: ce.message }, 400)
+
+// 2) 設定建立者為 owner（不用 upsert onConflict，避免缺唯一索引）
+// 先看是否已有紀錄
+const { data: exists, error: selErr } = await admin
+  .from('club_members')
+  .select('id,role')
+  .eq('club_id', club.id)
+  .eq('user_id', uid)
+  .maybeSingle()
+if (selErr) return json({ error: 'select club_members failed', detail: selErr.message }, 400)
+
+if (!exists) {
+  const { error: insErr } = await admin
+    .from('club_members')
+    .insert({ club_id: club.id as string, user_id: uid, role: 'owner' })
+  if (insErr) return json({ error: 'insert club_members failed', detail: insErr.message }, 400)
+} else {
+  const { error: updErr } = await admin
+    .from('club_members')
+    .update({ role: 'owner' })
+    .eq('id', exists.id)
+  if (updErr) return json({ error: 'update club_members failed', detail: updErr.message }, 400)
+}
+
+return json({ ok: true, id: club.id }, 200)
+} catch (e) {
+const msg = (e as any)?.message || String(e)
+return json({ error: 'internal', detail: msg }, 500)
+}
+})ezbmt-tracked/src/supabase/functions/send_notify/index.ts
  
 import { serve } from 'https://deno.land/std@0.224.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -3091,7 +3251,7 @@ export default function AdminModerationScreen() {
     }
   }, []);
 
-  // 撈 presence 10 分鐘內活躍（帶回 name/email）— 既有
+  // 撈 presence 10 分鐘內活躍（帶回 name/email）— 修改強化：明確以 String(key) 存取、顯示時同時呈現 name 與 email
   const loadActive = React.useCallback(async () => {
     setLoadingActive(true);
     setActivePage(1);
@@ -3106,22 +3266,25 @@ export default function AdminModerationScreen() {
       if (error) throw error;
 
       const uids = Array.from(new Set((data || []).map((r: any) => String(r.user_id))));
-      let meta: Record<string, { name?: string | null; email?: string | null }> = {};
+      // 以 String(id) 為 key，確保取值一致
+      const profilesMap: Record<string, { name?: string | null; email?: string | null }> = {};
       if (uids.length) {
         const { data: prof } = await supa.from('profiles').select('id,name,email').in('id', uids as any);
         (prof || []).forEach((p: any) => {
-          meta[p.id] = {
-            name: p?.name || null,
-            email: p?.email || null,
+          profilesMap[String(p.id)] = {
+            name: (p?.name != null ? String(p.name) : null),
+            email: (p?.email != null ? String(p.email) : null),
           };
         });
       }
+
       const rows: ActiveUser[] = (data || []).map((r: any) => {
-        const m = meta[String(r.user_id)] || {};
+        const uid = String(r.user_id);
+        const meta = profilesMap[uid] || {};
         return {
-          id: String(r.user_id),
-          name: m.name || null,
-          email: m.email || null,
+          id: uid,
+          name: (meta.name && String(meta.name)) || null,
+          email: (meta.email && String(meta.email)) || null,
           updated_at: String(r.last_seen_at || new Date().toISOString()),
           lat: typeof r.lat === 'number' ? r.lat : null,
           lng: typeof r.lng === 'number' ? r.lng : null,
@@ -3568,7 +3731,9 @@ export default function AdminModerationScreen() {
           ) : (
             joins.map(j => (
               <View key={j.id} style={{ borderBottomWidth:1, borderColor:'#2b2b2b', paddingVertical:8 }}>
-                <Text style={{ color:'#fff', fontWeight:'700' }}>{j.name || (j.email ? j.email.split('@')[0] : j.user_id.slice(0,8)+'…')}</Text>
+                <Text style={{ color:'#fff', fontWeight:'700' }}>
+                  {(j.name && j.name.trim()) || (j.email ? j.email.split('@')[0] : j.user_id.slice(0,8)+'…')}
+                </Text>
                 {!!j.email && <Text style={{ color:'#bbb', marginTop:2 }}>{j.email}</Text>}
                 {!!j.note && <Text style={{ color:'#ccc', marginTop:2 }}>備註：{j.note}</Text>}
                 <Text style={{ color:'#888', marginTop:2 }}>{new Date(j.created_at).toLocaleString()}</Text>
@@ -3624,10 +3789,20 @@ export default function AdminModerationScreen() {
                   <>
                     <ScrollView style={{ maxHeight: '70%' }} contentContainerStyle={{ paddingBottom: 10 }}>
                       {pageRows.map((u) => {
-                        const main = (u.email && u.email.trim()) || (u.name && u.name.trim()) || (u.id.slice(0, 8) + '…');
+                        const nameLine = (u.name && u.name.trim()) || '';
+                        const emailLine = (u.email && u.email.trim()) || '';
+                        const main = nameLine || emailLine || (u.id.slice(0, 8) + '…');
                         return (
                           <View key={u.id} style={{ paddingVertical: 8, borderBottomWidth: 1, borderColor: '#2b2b2b' }}>
                             <Text style={{ color: '#fff', fontWeight: '600' }}>{main}</Text>
+                            {/* 顯示兩者（若存在） */}
+                            {(nameLine && emailLine && nameLine !== emailLine) ? (
+                              <Text style={{ color: '#aaa', marginTop: 2 }}>{nameLine} · {emailLine}</Text>
+                            ) : nameLine ? (
+                              <Text style={{ color: '#aaa', marginTop: 2 }}>{nameLine}</Text>
+                            ) : emailLine ? (
+                              <Text style={{ color: '#aaa', marginTop: 2 }}>{emailLine}</Text>
+                            ) : null}
                             <Text style={{ color: '#888', marginTop: 2 }}>
                               最近活躍：{new Date(u.updated_at).toLocaleString()}
                             </Text>
@@ -3666,13 +3841,20 @@ export default function AdminModerationScreen() {
                     {activeUsers
                       .filter((u) => typeof u.lat === 'number' && typeof u.lng === 'number')
                       .map((u) => {
-                        const main = (u.email && u.email.trim()) || (u.name && u.name.trim()) || (u.id.slice(0, 8) + '…');
+                        const nameLine = (u.name && u.name.trim()) || '';
+                        const emailLine = (u.email && u.email.trim()) || '';
+                        const title = nameLine || emailLine || (u.id.slice(0, 8) + '…');
+                        const desc = [
+                          nameLine && emailLine ? `${nameLine} · ${emailLine}` : (nameLine || emailLine || ''),
+                          `最近活躍：${new Date(u.updated_at).toLocaleString()}`
+                        ].filter(Boolean).join('\n');
+                        // 舊 API：MapView.Marker（若使用新版可改為 <Marker>）
                         return (
                           <MapView.Marker
-                          key={u.id}
-                          coordinate={{ latitude: u.lat as number, longitude: u.lng as number }}
-                          title={main}
-                          description={`最近活躍：${new Date(u.updated_at).toLocaleString()}`}
+                            key={u.id}
+                            coordinate={{ latitude: u.lat as number, longitude: u.lng as number }}
+                            title={title}
+                            description={desc}
                           />
                         );
                       })}
@@ -6250,24 +6432,59 @@ style={{ paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#455a64', 
 );
 }ezbmt-tracked/src/screens/AuthScreen.tsx
  
- import React from 'react'; 
- import { View, Text, TextInput, Pressable, Alert, Image, SafeAreaView, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator, StatusBar, } from 'react-native'; 
- import { supa, getCurrentUser } from '../lib/supabase';
- import AsyncStorage from '@react-native-async-storage/async-storage';
-const ACTION_IMG = require('../images/action.png'); // 確認路徑
+import React from 'react';
+import {
+View,
+Text,
+TextInput,
+Pressable,
+Alert,
+Image,
+SafeAreaView,
+KeyboardAvoidingView,
+Platform,
+ScrollView,
+ActivityIndicator,
+StatusBar,
+} from 'react-native';
+import { supa, getCurrentUser } from '../lib/supabase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const ACTION_IMG = require('../images/action.png');
+
+const LAST_EMAIL_KEY = 'auth:last_email';
 
 export default function AuthScreen({ navigation }: any) {
 const [email, setEmail] = React.useState('');
 const [password, setPassword] = React.useState('');
 const [busy, setBusy] = React.useState(false);
 const [mode, setMode] = React.useState<'signin' | 'signup'>('signin');
+const [prefillLoaded, setPrefillLoaded] = React.useState(false);
 
+// 若已登入則直接進 Home
 React.useEffect(() => {
 (async () => {
 const u = await getCurrentUser();
 if (u) navigation.replace('Home');
 })();
 }, [navigation]);
+
+// 載入上次登入使用的 email
+React.useEffect(() => {
+let active = true;
+(async () => {
+try {
+const saved = await AsyncStorage.getItem(LAST_EMAIL_KEY);
+if (active && typeof saved === 'string' && saved.trim()) {
+setEmail(saved.trim());
+}
+} catch {}
+if (active) setPrefillLoaded(true);
+})();
+return () => {
+active = false;
+};
+}, []);
 
 const submit = async () => {
 const addr = (email ?? '').trim();
@@ -6294,6 +6511,12 @@ default: 'ezbmt://auth-callback',
     if (error) throw error;
     Alert.alert('已送出確認信', '請到信箱點擊驗證連結完成註冊');
   }
+
+  // 記住此次登入的 email
+  try {
+    await AsyncStorage.setItem(LAST_EMAIL_KEY, addr);
+  } catch {}
+
   navigation.replace('Home');
 } catch (e: any) {
   Alert.alert('失敗', String(e?.message || e));
@@ -6340,11 +6563,7 @@ marginBottom: 10,
 LBF能力有限 羽球分析平台
 </Text>
 
-        <Image
-          source={ACTION_IMG}
-          resizeMode="contain"
-          style={{ width: '100%', height: 90, marginBottom: 14 }}
-        />
+        <Image source={ACTION_IMG} resizeMode="contain" style={{ width: '100%', height: 90, marginBottom: 14 }} />
 
         <View style={{ height: 1, backgroundColor: '#E9ECEF', marginBottom: 16 }} />
 
@@ -6356,6 +6575,7 @@ LBF能力有限 羽球分析平台
           value={email}
           onChangeText={setEmail}
           returnKeyType="next"
+          editable={!busy}
           style={{
             backgroundColor: '#f6f7f8',
             borderWidth: 1,
@@ -6364,6 +6584,7 @@ LBF能力有限 羽球分析平台
             paddingHorizontal: 14,
             paddingVertical: 12,
             marginBottom: 16,
+            opacity: prefillLoaded ? 1 : 0.7,
           }}
         />
 
@@ -6374,6 +6595,7 @@ LBF能力有限 羽球分析平台
           value={password}
           onChangeText={setPassword}
           returnKeyType="done"
+          editable={!busy}
           onSubmitEditing={!busy ? submit : undefined}
           style={{
             backgroundColor: '#f6f7f8',
@@ -6409,7 +6631,8 @@ LBF能力有限 羽球分析平台
         </Pressable>
 
         <Pressable
-          onPress={() => setMode((m) => (m === 'signin' ? 'signup' : 'signin'))}
+          onPress={() => setMode(m => (m === 'signin' ? 'signup' : 'signin'))}
+          disabled={busy}
           style={{ marginTop: 14, alignSelf: 'center' }}
         >
           <Text style={{ color: '#1976d2' }}>
@@ -7949,6 +8172,8 @@ import React from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { getMyClubRole } from '../db';
+import { getUserTier, getAllowedFeaturesByTier, type Tier } from '../lib/feature';
+import { supa } from '../lib/supabase';
 
 const C = { bg:'#111', card:'#1e1e1e', text:'#fff', btn:'#1976d2', gray:'#616161' };
 
@@ -7958,7 +8183,7 @@ const nav = useNavigation<any>();
 const clubId = route.params?.clubId as string;
 
 const [role, setRole] = React.useState<string | null>(null);
-const canManage = role === 'owner' || role === 'admin';
+const [tier, setTier] = React.useState<Tier>('bronze');
 
 React.useEffect(() => {
 let alive = true;
@@ -7973,26 +8198,69 @@ if (alive) setRole(null);
 return () => { alive = false; };
 }, [clubId]);
 
-const Btn = ({ title, onPress, color='#1976d2' }: any) => (
+// 取得目前使用者等級（最大管理者=gold；若未啟用分級則=gold；否則依清單判定）
+React.useEffect(() => {
+let mounted = true;
+(async () => {
+const t = await getUserTier().catch(()=>'bronze' as Tier);
+if (mounted) setTier(t);
+})();
+return () => { mounted = false; };
+}, []);
+
+const allowed = getAllowedFeaturesByTier(tier);
+const canShow = (key: string) => {
+if (allowed.has('all')) return true;
+return allowed.has(key);
+};
+
+const Btn = ({ title, onPress, color='#1976d2', hidden=false }: any) => {
+if (hidden) return null;
+return (
 <Pressable onPress={onPress} style={{ backgroundColor: color, borderRadius:12, paddingVertical:12, alignItems:'center', marginBottom:10 }}>
 <Text style={{ color:'#fff', fontWeight:'700' }}>{title}</Text>
 </Pressable>
 );
+};
 
 return (
 <View style={{ flex:1, backgroundColor:C.bg, padding:16 }}>
-<Text style={{ color:C.text, fontSize:18, fontWeight:'700', marginBottom:12 }}>社團主頁</Text>
+<Text style={{ color:C.text, fontSize:18, fontWeight:'700', marginBottom:12 }}>社團主頁（等級：{tier}）</Text>
 
-  <Btn title="公告/貼文" onPress={()=>nav.navigate('ClubPosts', { clubId })} />
-  <Btn title="投票" onPress={()=>nav.navigate('ClubPolls', { clubId })} />
-  <Btn title="活動" onPress={()=>nav.navigate('ClubEvents', { clubId })} />
-  <Btn title="收費" onPress={()=>nav.navigate('ClubFees', { clubId })} />
-  <Btn title="成員" onPress={()=>nav.navigate('ClubMembers', { clubId })} />
-  <Btn title="球友名單" onPress={()=>nav.navigate('Buddies', { clubId })} />
-  <Btn title="場次" onPress={()=>nav.navigate('Sessions', { clubId })} />
-  <Btn title="聊天室" onPress={()=>nav.navigate('ClubChat', { clubId })} />
-  <Btn title="媒體" onPress={()=>nav.navigate('ClubMedia', { clubId })} />
-  {canManage && <Btn title="加入申請審核" onPress={()=>nav.navigate('ClubJoinRequests', { clubId })} color="#6d4c41" />}
+  {/* 公告/貼文 */}
+  <Btn title="公告/貼文" onPress={()=>nav.navigate('ClubPosts', { clubId })} hidden={!canShow('posts')} />
+
+  {/* 投票 */}
+  <Btn title="投票" onPress={()=>nav.navigate('ClubPolls', { clubId })} hidden={!canShow('polls')} />
+
+  {/* 活動 */}
+  <Btn title="活動" onPress={()=>nav.navigate('ClubEvents', { clubId })} hidden={!canShow('events')} />
+
+  {/* 收費（僅 gold） */}
+  <Btn title="收費" onPress={()=>nav.navigate('ClubFees', { clubId })} hidden={!canShow('fees')} />
+
+  {/* 成員 */}
+  <Btn title="成員" onPress={()=>nav.navigate('ClubMembers', { clubId })} hidden={!canShow('members')} />
+
+  {/* 球友 */}
+  <Btn title="球友名單" onPress={()=>nav.navigate('Buddies', { clubId })} hidden={!canShow('buddies')} />
+
+  {/* 場次 */}
+  <Btn title="場次" onPress={()=>nav.navigate('Sessions', { clubId })} hidden={!canShow('sessions')} />
+
+  {/* 聊天室 */}
+  <Btn title="聊天室" onPress={()=>nav.navigate('ClubChat', { clubId })} hidden={!canShow('chat')} />
+
+  {/* 媒體（僅 gold） */}
+  <Btn title="媒體" onPress={()=>nav.navigate('ClubMedia', { clubId })} hidden={!canShow('media')} />
+
+  {/* 加入申請審核 */}
+  <Btn title="加入申請審核" color="#6d4c41" onPress={()=>nav.navigate('ClubJoinRequests', { clubId })} hidden={!canShow('join_requests')} />
+
+  {/* 看板/統計（僅 gold；若有需要可放開） */}
+  <Btn title="看板（管理）" onPress={()=>nav.navigate('ClubBoard', { sessionId: null })} hidden={!canShow('board')} />
+  <Btn title="社團統計" onPress={()=>nav.navigate('ClubStats', { clubId })} hidden={!canShow('stats')} />
+
   <View style={{ height:8 }} />
   <Btn title="返回社團清單" onPress={()=>nav.navigate('Clubs')} color={C.gray} />
 </View>
@@ -13546,31 +13814,60 @@ async function buildPrevRoundSummary(sessionId: string, courts: number): Promise
 import React from 'react';
 import { View, Text, FlatList, TextInput, Pressable, Alert, Switch } from 'react-native';
 import { listDictionary, upsertDictionary, deleteDictionary } from '../db';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getTierEnabled, setTierEnabled, getTierList, setTierList } from '../lib/feature';
 
 const C = {
 bg: '#111',
-card: '#222',
+card: '#1e1e1e',
 border: '#333',
 field: '#111',
 fieldBorder: '#444',
 text: '#fff',
 sub: '#ddd',
 hint: '#888',
+chip: '#90caf9',
 };
 
 export default function SettingsScreen() {
+// 原有：球種/失誤類型（保留，但收納到一個按鈕區塊）
 const [kindShot, setKindShot] = React.useState(true); // true=shot_type, false=error_reason
 const [items, setItems] = React.useState<Array<{id:string;label:string;order_no:number}>>([]);
 const [label, setLabel] = React.useState('');
 const [order, setOrder] = React.useState('0');
+const [dictOpen, setDictOpen] = React.useState(false); // 新增：收納開關
+
+// 新增：功能開關（社團權限分級控制）
+const [tierEnabled, setTierEnabledState] = React.useState<boolean>(false);
+// 新增：社團權限清單（白銀/黃金）
+const [silverList, setSilverList] = React.useState<string[]>([]);
+const [goldList, setGoldList] = React.useState<string[]>([]);
+const [editMail, setEditMail] = React.useState<string>(''); // 輸入框（加入 email）
 
 const load = React.useCallback(async () => {
+// 讀取字典（預設顯示 shot_type）
 const k = kindShot ? 'shot_type' : 'error_reason';
 const rows = await listDictionary(k as any);
 setItems(rows as any);
 }, [kindShot]);
 
 React.useEffect(()=>{ load(); }, [load]);
+
+// 載入功能開關與 tier lists
+React.useEffect(() => {
+(async () => {
+try {
+const en = await getTierEnabled();
+setTierEnabledState(en);
+} catch {}
+try {
+const sil = await getTierList('silver');
+const gol = await getTierList('gold');
+setSilverList(sil);
+setGoldList(gol);
+} catch {}
+})();
+}, []);
 
 const add = async () => {
 if (!label.trim()) return;
@@ -13593,46 +13890,178 @@ const renderItem = ({item}:{item:{id:string;label:string;order_no:number}}) => (
 </View>
 );
 
+// 功能開關：啟用/停用
+const toggleTierEnabled = async () => {
+const next = !tierEnabled;
+setTierEnabledState(next);
+try { await setTierEnabled(next); } catch {}
+};
+
+// 常用：格式化 email
+const normMail = (s: string) => String(s || '').trim().toLowerCase();
+
+// 新增 email 至白銀/黃金清單
+const addToTier = async (tier: 'silver' | 'gold') => {
+const mail = normMail(editMail);
+if (!mail) return;
+const cur = tier === 'silver' ? silverList : goldList;
+if (cur.includes(mail)) {
+Alert.alert('提示', '清單中已存在');
+return;
+}
+const next = [...cur, mail];
+if (tier === 'silver') setSilverList(next); else setGoldList(next);
+try { await setTierList(tier, next); } catch {}
+setEditMail('');
+};
+
+// 移除 email
+const removeFromTier = async (tier: 'silver' | 'gold', mail: string) => {
+const cur = tier === 'silver' ? silverList : goldList;
+const next = cur.filter(x => x !== mail);
+if (tier === 'silver') setSilverList(next); else setGoldList(next);
+try { await setTierList(tier, next); } catch {}
+};
+
 return (
 <View style={{ flex:1, padding:12, backgroundColor: C.bg }}>
-<View style={{ flexDirection:'row', alignItems:'center', marginBottom:8 }}>
-<Text style={{ marginRight:8, color: C.text }}>編輯：</Text>
-<Text style={{ marginRight:6, color: kindShot?'#90caf9':C.sub }}>球種</Text>
-<Switch
-value={kindShot}
-onValueChange={setKindShot}
-trackColor={{ false: '#555', true: '#1976d2' }}
-thumbColor="#fff"
-/>
-<Text style={{ marginLeft:6, color: !kindShot?'#90caf9':C.sub }}>失誤原因</Text>
-</View>
+<Text style={{ color: C.text, fontSize: 18, fontWeight: '800', marginBottom: 10 }}>基本設定</Text>
 
-  <FlatList
-    data={items}
-    keyExtractor={(i)=>i.id}
-    renderItem={renderItem}
-  />
-
-  <View style={{ borderTopWidth:1, borderColor:C.border, paddingTop:10, marginTop:10 }}>
-    <Text style={{ fontWeight:'600', marginBottom:6, color: C.text }}>新增</Text>
-    <TextInput
-      placeholder="名稱（如：切球）"
-      placeholderTextColor={C.hint}
-      value={label}
-      onChangeText={setLabel}
-      style={{ borderWidth:1, borderColor:C.fieldBorder, borderRadius:8, paddingHorizontal:10, paddingVertical:8, marginBottom:6, color: C.text, backgroundColor: C.field }}
-    />
-    <TextInput
-      placeholder="排序（數字，小到大）"
-      placeholderTextColor={C.hint}
-      value={order}
-      onChangeText={setOrder}
-      keyboardType="number-pad"
-      style={{ borderWidth:1, borderColor:C.fieldBorder, borderRadius:8, paddingHorizontal:10, paddingVertical:8, marginBottom:8, width:160, color: C.text, backgroundColor: C.field }}
-    />
-    <Pressable onPress={add} style={{ backgroundColor:'#1976d2', paddingVertical:10, borderRadius:8, alignItems:'center' }}>
-      <Text style={{ color:'#fff' }}>新增項目</Text>
+  {/* 1) 球種/失誤項目設定（收納成一個按鈕） */}
+  <View style={{ marginBottom: 10 }}>
+    <Pressable
+      onPress={() => setDictOpen(o => !o)}
+      style={{ paddingVertical:10, paddingHorizontal:12, borderRadius:10, borderWidth:1, borderColor:'#444', backgroundColor:'#1c1c1c', flexDirection:'row', alignItems:'center', justifyContent:'space-between' }}
+    >
+      <Text style={{ color:'#fff', fontWeight:'800' }}>球種/失誤項目設定</Text>
+      <Text style={{ color:'#90caf9' }}>{dictOpen ? '▲' : '▼'}</Text>
     </Pressable>
+
+    {dictOpen && (
+      <View style={{ marginTop: 10, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:10, padding:10 }}>
+        <View style={{ flexDirection:'row', alignItems:'center', marginBottom:8 }}>
+          <Text style={{ marginRight:8, color: C.text }}>編輯：</Text>
+          <Text style={{ marginRight:6, color: kindShot?'#90caf9':C.sub }}>球種</Text>
+          <Switch
+            value={kindShot}
+            onValueChange={setKindShot}
+            trackColor={{ false: '#555', true: '#1976d2' }}
+            thumbColor="#fff"
+          />
+          <Text style={{ marginLeft:6, color: !kindShot?'#90caf9':C.sub }}>失誤原因</Text>
+        </View>
+
+        <FlatList data={items} keyExtractor={(i)=>i.id} renderItem={renderItem} />
+
+        <View style={{ borderTopWidth:1, borderColor:C.border, paddingTop:10, marginTop:10 }}>
+          <Text style={{ fontWeight:'600', marginBottom:6, color: C.text }}>新增</Text>
+          <TextInput
+            placeholder="名稱（如：切球）"
+            placeholderTextColor={C.hint}
+            value={label}
+            onChangeText={setLabel}
+            style={{ borderWidth:1, borderColor:C.fieldBorder, borderRadius:8, paddingHorizontal:10, paddingVertical:8, marginBottom:6, color: C.text, backgroundColor: C.field }}
+          />
+          <TextInput
+            placeholder="排序（數字，小到大）"
+            placeholderTextColor={C.hint}
+            value={order}
+            onChangeText={setOrder}
+            keyboardType="number-pad"
+            style={{ borderWidth:1, borderColor:C.fieldBorder, borderRadius:8, paddingHorizontal:10, paddingVertical:8, marginBottom:8, width:160, color: C.text, backgroundColor: C.field }}
+          />
+          <Pressable onPress={add} style={{ backgroundColor:'#1976d2', paddingVertical:10, borderRadius:8, alignItems:'center' }}>
+            <Text style={{ color:'#fff' }}>新增項目</Text>
+          </Pressable>
+        </View>
+      </View>
+    )}
+  </View>
+
+  {/* 2) 功能開關（社團權限） */}
+  <View style={{ marginTop: 12, borderWidth:1, borderColor:C.border, backgroundColor:C.card, borderRadius:10, padding:10 }}>
+    <Text style={{ color: C.text, fontWeight:'700', marginBottom: 8 }}>功能開關</Text>
+
+    {/* 啟用社團權限分級 */}
+    <View style={{ flexDirection:'row', alignItems:'center', marginBottom:8 }}>
+      <Text style={{ color: C.text, marginRight:8 }}>啟用「社團權限分級」</Text>
+      <Switch value={tierEnabled} onValueChange={toggleTierEnabled} />
+    </View>
+    <Text style={{ color: C.sub, marginBottom:10 }}>
+      若啟用分級：最大管理者=黃金；未在清單中之使用者=青銅；可在下方維護「白銀」「黃金」的名單（以 Email 比對）。未啟用時，所有人視為「黃金」。
+    </Text>
+
+    {/* 社團權限清單 */}
+    <Text style={{ color: C.text, fontWeight:'700', marginBottom:6 }}>社團權限</Text>
+    <View style={{ marginBottom:6 }}>
+      <Text style={{ color: C.sub }}>
+        青銅可見：公告/貼文、成員、球友、場次、聊天室、申請加入審核
+      </Text>
+      <Text style={{ color: C.sub }}>
+        白銀可見：公告/貼文、投票、活動、成員、球友、場次、聊天室、申請加入審核
+      </Text>
+      <Text style={{ color: C.sub }}>
+        黃金可見：全部
+      </Text>
+    </View>
+
+    {/* 名單維護 */}
+    <Text style={{ color: C.text, fontWeight:'700', marginTop:8 }}>名單維護（輸入 Email 後加入）</Text>
+    <View style={{ flexDirection:'row', alignItems:'center', marginTop:6, marginBottom:8 }}>
+      <TextInput
+        value={editMail}
+        onChangeText={setEditMail}
+        placeholder="example@mail.com"
+        placeholderTextColor={C.hint}
+        autoCapitalize="none"
+        keyboardType="email-address"
+        style={{ flex:1, borderWidth:1, borderColor:'#444', borderRadius:8, paddingHorizontal:10, paddingVertical:8, color:'#fff', backgroundColor:'#111', marginRight:8 }}
+      />
+      <Pressable onPress={() => addToTier('silver')} style={{ paddingVertical:8, paddingHorizontal:12, backgroundColor:'#607d8b', borderRadius:8, marginRight:8 }}>
+        <Text style={{ color:'#fff' }}>加入白銀</Text>
+      </Pressable>
+      <Pressable onPress={() => addToTier('gold')} style={{ paddingVertical:8, paddingHorizontal:12, backgroundColor:'#c0a600', borderRadius:8 }}>
+        <Text style={{ color:'#000', fontWeight:'700' }}>加入黃金</Text>
+      </Pressable>
+    </View>
+
+    {/* 白銀清單 */}
+    <View style={{ marginTop: 8 }}>
+      <Text style={{ color: '#90caf9', fontWeight:'700', marginBottom:6 }}>白銀名單（{silverList.length}）</Text>
+      <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
+        {silverList.length === 0 ? (
+          <Text style={{ color:'#888' }}>尚無白銀名單</Text>
+        ) : silverList.map(m => (
+          <View key={'s-'+m} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:14, borderWidth:1, borderColor:'#555', backgroundColor:'#1f1f1f', marginRight:8, marginBottom:8 }}>
+            <Text style={{ color:'#fff' }}>{m}</Text>
+            <Pressable onPress={() => removeFromTier('silver', m)} style={{ marginTop:4 }}>
+              <Text style={{ color:'#ffab91' }}>移除</Text>
+            </Pressable>
+          </View>
+        ))}
+      </View>
+    </View>
+
+    {/* 黃金清單 */}
+    <View style={{ marginTop: 8 }}>
+      <Text style={{ color: '#ffd54f', fontWeight:'700', marginBottom:6 }}>黃金名單（{goldList.length}）</Text>
+      <View style={{ flexDirection:'row', flexWrap:'wrap' }}>
+        {goldList.length === 0 ? (
+          <Text style={{ color:'#888' }}>尚無黃金名單</Text>
+        ) : goldList.map(m => (
+          <View key={'g-'+m} style={{ paddingVertical:6, paddingHorizontal:10, borderRadius:14, borderWidth:1, borderColor:'#555', backgroundColor:'#1f1f1f', marginRight:8, marginBottom:8 }}>
+            <Text style={{ color:'#fff' }}>{m}</Text>
+            <Pressable onPress={() => removeFromTier('gold', m)} style={{ marginTop:4 }}>
+              <Text style={{ color:'#ffab91' }}>移除</Text>
+            </Pressable>
+          </View>
+        ))}
+      </View>
+    </View>
+
+    <Text style={{ color: C.sub, marginTop: 10 }}>
+      提醒：名單僅以 Email 比對。最大管理者永遠為「黃金」。未啟用分級時，所有人也視為「黃金」。
+    </Text>
   </View>
 </View>
 );
@@ -19362,6 +19791,102 @@ if (stopped) return;
 stopped = true;
 if (timer) clearInterval(timer);
 };
+}ezbmt-tracked/src/lib/feature.ts
+ 
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supa } from './supabase';
+
+export type Tier = 'bronze' | 'silver' | 'gold';
+
+const TIER_ENABLED_KEY = 'feature:tiers:enabled';
+const TIER_SILVER_KEY = 'feature:tiers:silver';
+const TIER_GOLD_KEY = 'feature:tiers:gold';
+
+export async function getTierEnabled(): Promise<boolean> {
+try {
+const s = await AsyncStorage.getItem(TIER_ENABLED_KEY);
+return s === '1';
+} catch {
+return false;
+}
+}
+
+export async function setTierEnabled(on: boolean): Promise<void> {
+try {
+await AsyncStorage.setItem(TIER_ENABLED_KEY, on ? '1' : '0');
+} catch {}
+}
+
+export async function getTierList(kind: 'silver' | 'gold'): Promise<string[]> {
+try {
+const key = kind === 'silver' ? TIER_SILVER_KEY : TIER_GOLD_KEY;
+const s = await AsyncStorage.getItem(key);
+if (!s) return [];
+const arr = JSON.parse(s);
+if (Array.isArray(arr)) {
+return arr.map(x => String(x)).filter(x => x.trim().length > 0);
+}
+return [];
+} catch {
+return [];
+}
+}
+
+export async function setTierList(kind: 'silver' | 'gold', list: string[]): Promise<void> {
+try {
+const key = kind === 'silver' ? TIER_SILVER_KEY : TIER_GOLD_KEY;
+const clean = Array.from(new Set(list.map(x => String(x).trim().toLowerCase()).filter(Boolean)));
+await AsyncStorage.setItem(key, JSON.stringify(clean));
+} catch {}
+}
+
+/**
+
+取得目前使用者權限等級：
+最大管理者（RPC is_app_admin 為 true）= gold
+若未啟用分級（功能開關 off）= gold
+啟用時：
+使用者 email 在 gold 清單 ⇒ gold
+使用者 email 在 silver 清單 ⇒ silver
+否則 ⇒ bronze */ 
+export async function getUserTier(): Promise<Tier> { try { // 最大管理者 try { const { data, error } = await supa.rpc('is_app_admin'); if (!error && !!data) return 'gold'; } catch {}
+// 是否啟用分級
+const enabled = await getTierEnabled();
+if (!enabled) return 'gold';
+
+// 取得使用者 email
+let email: string | null = null;
+try {
+  const { data } = await supa.auth.getUser();
+  email = data?.user?.email || null;
+} catch {}
+if (!email) return 'bronze';
+const mail = email.trim().toLowerCase();
+
+const goldList = await getTierList('gold');
+if (goldList.includes(mail)) return 'gold';
+
+const silverList = await getTierList('silver');
+if (silverList.includes(mail)) return 'silver';
+
+return 'bronze';
+} catch {
+return 'bronze';
+}
+}
+
+/** 工具：等級到可見功能集合（ClubDashboard 使用）。 */
+export function getAllowedFeaturesByTier(tier: Tier): Set<string> {
+if (tier === 'gold') return new Set<string>([
+'posts', 'polls', 'events', 'fees', 'members', 'buddies', 'sessions', 'chat', 'media', 'join_requests', 'board', 'stats'
+]);
+if (tier === 'silver') return new Set<string>([
+'posts', 'polls', 'events', 'members', 'buddies', 'sessions', 'chat', 'join_requests'
+]);
+// bronze
+return new Set<string>([
+'posts', 'members', 'buddies', 'sessions', 'chat', 'join_requests'
+]);
 }ezbmt-tracked/src/lib/export.ts
  
 import { Platform } from 'react-native';
@@ -21587,28 +22112,33 @@ const { data, error } = await supa.from('clubs').select('id,name,description').o
 if (error) throw error;
 return data || [];
 }
-export async function createClub(args: { name: string; description?: string }) {
-// 先建立社團
-const { data, error } = await supa
-.from('clubs')
-.insert({ name: args.name, description: args.description ?? null })
-.select('id')
-.single();
-if (error) throw error;
 
-// 再把建立者加為 owner（若已存在就覆寫角色）
+export async function createClub(args: { name: string; description?: string }) {
+const name = (args.name || '').trim();
+const desc = args.description == null ? null : String(args.description);
+if (!name) throw new Error('請輸入社團名稱');
+
+// 保證目前有登入者
 const { data: me } = await supa.auth.getUser();
 const uid = me?.user?.id;
-if (uid && data?.id) {
-const { error: e2 } = await supa
-.from('club_members')
-.upsert(
-{ club_id: data.id as string, user_id: uid, role: 'owner' },
-{ onConflict: 'club_id,user_id' }
-);
-if (e2) throw e2;
+if (!uid) throw new Error('尚未登入或登入已過期，請重新登入');
+
+// 呼叫 RPC：帶 p_user_id 作為保底
+const { data, error } = await supa.rpc('create_club_secure', {
+p_name: name,
+p_description: desc,
+p_user_id: uid,
+});
+
+if (error) {
+const msg = (error as any)?.message || String(error);
+throw new Error(msg);
 }
+return { ok: true, id: data as string };
 }
+
+
+
 export async function getMyClubRoles(clubIds: string[]): Promise<Record<string,string>> {
 if (!clubIds.length) return {};
 const { data, error } = await supa.from('club_members').select('club_id,role').in('club_id', clubIds as any);

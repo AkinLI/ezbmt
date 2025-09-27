@@ -498,10 +498,23 @@ return { ok: true, id: data as string };
 
 export async function getMyClubRoles(clubIds: string[]): Promise<Record<string,string>> {
 if (!clubIds.length) return {};
-const { data, error } = await supa.from('club_members').select('club_id,role').in('club_id', clubIds as any);
-if (error) return {};
-const map: Record<string,string> = {};
-(data||[]).forEach((r:any)=>{ map[r.club_id] = String(r.role||''); });
+
+const { data: me } = await supa.auth.getUser();
+const uid = me?.user?.id;
+if (!uid) return {};
+
+const { data, error } = await supa
+.from('club_members')
+.select('club_id,role')
+.eq('user_id', uid)
+.in('club_id', clubIds as any);
+
+if (error) throw error;
+
+const map: Record<string, string> = {};
+(data || []).forEach((r: any) => {
+map[String(r.club_id)] = String(r.role || '');
+});
 return map;
 }
 

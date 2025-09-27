@@ -149,6 +149,8 @@ function viewToFrameNorm(vx: number, vy: number, mv: MapVars): Pt {
 
   // 如需補償旋轉（View portrait / Frame landscape）
   if (mv.rotated) {
+    // 逆時針 ↔ 順時針的實務差異在不同機型上會不同
+    // 這裡採用：畫面已被旋到直向，反推回 frame：view(x,y) → frame(u,v)
     // 以「向右 90°」來還原： fx' = fy, fy' = 1 - fx
     const rx = fy;
     const ry = 1 - fx;
@@ -232,7 +234,7 @@ export default function SpeedCamScreen() {
   // Frame 尺寸（由 sample 提供）
   const frameSizeRef = React.useRef<{ w: number; h: number } | null>(null);
 
-  // 設定面板：可收納（預設開或關不影響此改動）
+  // 設定面板：可收納
   const [panelOpen, setPanelOpen] = React.useState(true);
 
   // 速度門檻（固定使用 km/h 表示）
@@ -506,12 +508,9 @@ export default function SpeedCamScreen() {
       </View>
     );
 
-  // 面板尺寸（依螢幕大小動態調整；旋轉前的寬度）
-  const screenW = Dimensions.get('window').width;
-  const screenH = Dimensions.get('window').height;
-  // 讓設定面板寬度在手機上不會過大；旋轉後會消耗螢幕高度
-  const PANEL_W = Math.min(560, Math.max(360, Math.floor(screenH * 0.8)));
-  const PANEL_MAX_H = Math.min(360, Math.max(260, Math.floor(screenW * 0.8)));
+  // 面板尺寸（旋轉前）
+  const PANEL_W = 560;
+  const PANEL_MAX_H = 360;
 
   // 取 MapVars（供繪製點時用反變換）
   const mv = getMapVars(viewSize, frameSizeRef.current);
@@ -556,7 +555,7 @@ export default function SpeedCamScreen() {
         style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
       />
 
-      {/* 軌跡繪製（最近 1.5 秒）＋ 校正點可視化 */}
+      {/* 軌跡繪製（最近 1.5 秒）＋ 校正點可視化（改用 frameNormToView） */}
       <View
         pointerEvents="none"
         style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }}
@@ -630,7 +629,7 @@ export default function SpeedCamScreen() {
         </RotBox>
       </View>
 
-      {/* 設定面板開關（橫向）：移到貼齊右側 */}
+      {/* 設定面板開關（橫向） */}
       <View style={{ position: 'absolute', right: 10, top: 200 }}>
         <RotBox>
           <Pressable
@@ -649,16 +648,16 @@ export default function SpeedCamScreen() {
         </RotBox>
       </View>
 
-      {/* 設定面板（橫向，動態靠右對齊） */}
+      {/* 設定面板（橫向）：兩欄 + 內層滾動 */}
       {panelOpen && (
-        <View style={{ position: 'absolute', right: 320, bottom: -140 }}>
+        <View style={{ position: 'absolute', right: 320, bottom: 50 }}>
           <RotBox>
             <View
               style={{
                 backgroundColor: 'rgba(0,0,0,0.6)',
                 borderRadius: 12,
                 padding: 12,
-                width: PANEL_W,
+                width: 560,
               }}
             >
               <Text
@@ -672,7 +671,7 @@ export default function SpeedCamScreen() {
                 設定
               </Text>
 
-              <View style={{ maxHeight: PANEL_MAX_H }}>
+              <View style={{ maxHeight: 360 }}>
                 <ScrollView
                   showsVerticalScrollIndicator
                   contentContainerStyle={{ paddingBottom: 8 }}

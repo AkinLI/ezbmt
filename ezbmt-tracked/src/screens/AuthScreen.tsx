@@ -27,9 +27,6 @@ const [busy, setBusy] = React.useState(false);
 const [mode, setMode] = React.useState<'signin' | 'signup'>('signin');
 const [prefillLoaded, setPrefillLoaded] = React.useState(false);
 
-// 忘記密碼忙碌狀態
-const [forgotBusy, setForgotBusy] = React.useState(false);
-
 // 若已登入則直接進 Home
 React.useEffect(() => {
 (async () => {
@@ -94,31 +91,6 @@ default: 'ezbmt://auth-callback',
 }
 };
 
-const forgot = async () => {
-const addr = (email ?? '').trim();
-if (!addr) {
-Alert.alert('提示', '請先在帳號欄位輸入 Email');
-return;
-}
-setForgotBusy(true);
-try {
-// 與後台 Additional Redirect URLs 對應
-const redirectTo = Platform.select({
-ios: 'ezbmt://auth-callback',
-android: 'ezbmt://auth-callback',
-default: 'ezbmt://auth-callback',
-}) as string;
-
-  const { error } = await supa.auth.resetPasswordForEmail(addr, { redirectTo });
-  if (error) throw error;
-  Alert.alert('已寄出', '重設密碼連結已寄到你的信箱，請依信件指示重設密碼。');
-} catch (e: any) {
-  Alert.alert('失敗', String(e?.message || e));
-} finally {
-  setForgotBusy(false);
-}
-};
-
 return (
 <SafeAreaView style={{ flex: 1, backgroundColor: '#f2f5f6' }}>
 <StatusBar barStyle={Platform.OS === 'ios' ? 'dark-content' : 'default'} />
@@ -169,7 +141,7 @@ LBF能力有限 羽球分析平台
           value={email}
           onChangeText={setEmail}
           returnKeyType="next"
-          editable={!busy && !forgotBusy}
+          editable={!busy}
           style={{
             backgroundColor: '#f6f7f8',
             borderWidth: 1,
@@ -189,7 +161,7 @@ LBF能力有限 羽球分析平台
           value={password}
           onChangeText={setPassword}
           returnKeyType="done"
-          editable={!busy && !forgotBusy}
+          editable={!busy}
           onSubmitEditing={!busy ? submit : undefined}
           style={{
             backgroundColor: '#f6f7f8',
@@ -198,23 +170,12 @@ LBF能力有限 羽球分析平台
             borderRadius: 14,
             paddingHorizontal: 14,
             paddingVertical: 12,
-            marginBottom: 10,
+            marginBottom: 24,
           }}
         />
 
-        {/* 忘記密碼 */}
         <Pressable
-          onPress={forgot}
-          disabled={busy || forgotBusy}
-          style={{ alignSelf: 'flex-end', marginBottom: 14 }}
-        >
-          <Text style={{ color: '#1976d2' }}>
-            {forgotBusy ? '寄送中…' : '忘記密碼？'}
-          </Text>
-        </Pressable>
-
-        <Pressable
-          disabled={busy || forgotBusy}
+          disabled={busy}
           onPress={submit}
           style={{
             alignSelf: 'center',
@@ -223,7 +184,7 @@ LBF能力有限 羽球分析平台
             borderRadius: 22,
             paddingVertical: 14,
             alignItems: 'center',
-            opacity: busy || forgotBusy ? 0.7 : 1,
+            opacity: busy ? 0.7 : 1,
           }}
         >
           {busy ? (
@@ -237,7 +198,7 @@ LBF能力有限 羽球分析平台
 
         <Pressable
           onPress={() => setMode(m => (m === 'signin' ? 'signup' : 'signin'))}
-          disabled={busy || forgotBusy}
+          disabled={busy}
           style={{ marginTop: 14, alignSelf: 'center' }}
         >
           <Text style={{ color: '#1976d2' }}>

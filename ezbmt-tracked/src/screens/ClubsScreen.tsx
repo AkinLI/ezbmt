@@ -37,9 +37,6 @@ const ownerCount = React.useMemo(
 // 是否顯示「新增社團」區塊：最大管理者不受限；一般使用者最多 3 個
 const showCreate = isAdmin || ownerCount < 3;
 
-// 新增社團區塊：預設收合（預設 false=收合）
-const [createOpen, setCreateOpen] = React.useState(false);
-
 const load = React.useCallback(async () => {
 try {
 setRolesReady(false);
@@ -251,58 +248,36 @@ ListHeaderComponent={(
 <View style={{ marginBottom:12 }}>
 <Text style={{ color:C.text, fontSize:16, fontWeight:'700', marginBottom:8 }}>我的社團</Text>
 
-        {/* 新增社團（預設收合；非 admin 且已達 3 個則隱藏） */}
+        {/* 新增社團（非 admin 且已達 3 個則隱藏） */}
         {showCreate && (
-          <View>
-            <Pressable
-              onPress={() => setCreateOpen(o => !o)}
+          <View style={{ borderWidth:1, borderColor:C.border, borderRadius:10, backgroundColor:C.card, padding:10, marginTop:4 }}>
+            <Text style={{ color:C.text, fontWeight:'600', marginBottom:6 }}>新增社團</Text>
+            <TextInput
+              value={name}
+              onChangeText={(t: string)=>setName(t)}
+              placeholder="社團名稱"
+              placeholderTextColor="#888"
               style={{
-                paddingVertical:10,
-                paddingHorizontal:12,
-                borderRadius:10,
-                borderWidth:1,
-                borderColor:'#444',
-                backgroundColor:'#1c1c1c',
-                flexDirection:'row',
-                alignItems:'center',
-                justifyContent:'space-between'
+                borderWidth:1, borderColor:'#444', borderRadius:8,
+                paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8
               }}
+            />
+            <TextInput
+              value={desc}
+              onChangeText={(t: string)=>setDesc(t)}
+              placeholder="簡介（可空）"
+              placeholderTextColor="#888"
+              style={{
+                borderWidth:1, borderColor:'#444', borderRadius:8,
+                paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8
+              }}
+            />
+            <Pressable
+              onPress={add}
+              style={{ backgroundColor:C.primary, borderRadius:8, paddingVertical:10, alignItems:'center' }}
             >
-              <Text style={{ color:'#fff', fontWeight:'800' }}>新增社團</Text>
-              <Text style={{ color:'#90caf9' }}>{createOpen ? '▲' : '▼'}</Text>
+              <Text style={{ color:'#fff' }}>建立</Text>
             </Pressable>
-
-            {createOpen && (
-              <View style={{ borderWidth:1, borderColor:C.border, borderRadius:10, backgroundColor:C.card, padding:10, marginTop:10 }}>
-                <Text style={{ color:C.text, fontWeight:'600', marginBottom:6 }}>建立新社團</Text>
-                <TextInput
-                  value={name}
-                  onChangeText={(t: string)=>setName(t)}
-                  placeholder="社團名稱"
-                  placeholderTextColor="#888"
-                  style={{
-                    borderWidth:1, borderColor:'#444', borderRadius:8,
-                    paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8
-                  }}
-                />
-                <TextInput
-                  value={desc}
-                  onChangeText={(t: string)=>setDesc(t)}
-                  placeholder="簡介（可空）"
-                  placeholderTextColor="#888"
-                  style={{
-                    borderWidth:1, borderColor:'#444', borderRadius:8,
-                    paddingHorizontal:10, paddingVertical:8, color:C.text, marginBottom:8
-                  }}
-                />
-                <Pressable
-                  onPress={add}
-                  style={{ backgroundColor:C.primary, borderRadius:8, paddingVertical:10, alignItems:'center' }}
-                >
-                  <Text style={{ color:'#fff' }}>建立</Text>
-                </Pressable>
-              </View>
-            )}
           </View>
         )}
       </View>
